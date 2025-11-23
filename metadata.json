@@ -1,0 +1,9 @@
+{
+  "name": "BugSnap",
+  "description": "AI-powered visual bug reporting tool with annotation, video support, and integrations.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ]
+}
