@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig } from '../types';
 import { refineBugReport } from '../services/geminiService';
@@ -162,34 +163,18 @@ export const Editor: React.FC<EditorProps> = ({
     const point = getCanvasPoint(e);
     
     if (resizeHandle && selectedAnnotationId) {
-        // Update the selected annotation coordinates based on handle
         const updatedAnnotations = annotations.map(ann => {
             if (ann.id === selectedAnnotationId) {
                 const newAnn = { ...ann };
-                if (resizeHandle === 'tl') {
-                    // Start point is Top-Left usually, but we need to find which is which
-                    // Simplified: Just update start/end based on drag
-                    // Better approach: Keep start/end logic flexible
-                    // If dragging TL, we are updating the minX/minY corner.
-                    // To keep it simple: We just update start point if TL, end point if BR, etc.
-                    // But start/end can be flipped. 
-                    // Let's assume start is anchor for BR resize, end is anchor for TL resize is tricky.
-                    // Correct way: Identify opposite corner, keep it fixed, update dragging corner.
-                    
-                    // Simple logic for now: Just update start or end depending on handle?
-                    // Let's assume user draws TL to BR.
-                    if (resizeHandle === 'br') newAnn.end = point;
-                    else if (resizeHandle === 'tl') newAnn.start = point;
-                    else if (resizeHandle === 'tr') { newAnn.end.x = point.x; newAnn.start.y = point.y; }
-                    else if (resizeHandle === 'bl') { newAnn.start.x = point.x; newAnn.end.y = point.y; }
-                }
+                if (resizeHandle === 'tl') newAnn.start = point;
+                else if (resizeHandle === 'br') newAnn.end = point;
+                else if (resizeHandle === 'tr') { newAnn.end.x = point.x; newAnn.start.y = point.y; }
+                else if (resizeHandle === 'bl') { newAnn.start.x = point.x; newAnn.end.y = point.y; }
                 return newAnn;
             }
             return ann;
         });
         setAnnotations(updatedAnnotations);
-        // Defer onUpdateSlide to mouseUp to avoid excessive writes? No, need instant feedback.
-        // But for performance, maybe local state only.
         return;
     }
 
@@ -200,7 +185,6 @@ export const Editor: React.FC<EditorProps> = ({
     if (!isDrawing) return;
     
     if (resizeHandle && selectedAnnotationId) {
-        // Commit resize
         onUpdateSlide({ ...activeSlide, annotations });
         setResizeHandle(null);
         setIsDrawing(false);
@@ -209,7 +193,6 @@ export const Editor: React.FC<EditorProps> = ({
 
     if (!startPoint || !currentPoint) return;
     
-    // Prevent tiny clicks creating shapes
     if (Math.abs(currentPoint.x - startPoint.x) < 5 && Math.abs(currentPoint.y - startPoint.y) < 5) {
       setIsDrawing(false);
       return;
@@ -275,18 +258,23 @@ export const Editor: React.FC<EditorProps> = ({
     if (idx > 0) onSelectSlide(slides[idx - 1].id);
   };
 
-  // --- Export Logic (Composite Image) ---
+  // --- Export Logic ---
+
+  const hexToRgba = (hex: string, alpha: number) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
 
   const wrapText = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number) => {
     const words = text.split(' ');
     let line = '';
     let currentY = y;
-
     for (let n = 0; n < words.length; n++) {
         const testLine = line + words[n] + ' ';
         const metrics = ctx.measureText(testLine);
-        const testWidth = metrics.width;
-        if (testWidth > maxWidth && n > 0) {
+        if (metrics.width > maxWidth && n > 0) {
             ctx.fillText(line, x, currentY);
             line = words[n] + ' ';
             currentY += lineHeight;
@@ -297,21 +285,12 @@ export const Editor: React.FC<EditorProps> = ({
     ctx.fillText(line, x, currentY);
     return currentY + lineHeight;
   }
-  
-  // Helper to convert hex to rgba for transparent fills
-  const hexToRgba = (hex: string, alpha: number) => {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  };
 
   const generateCompositeImage = async (slide: Slide): Promise<Blob> => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error("Canvas creation failed");
 
-    // 1. Get Media Dimensions & Source
     let naturalWidth = 0;
     let naturalHeight = 0;
     let displayWidth = 0;
@@ -339,7 +318,6 @@ export const Editor: React.FC<EditorProps> = ({
              const res = await fetch(slide.src);
              return await res.blob();
         }
-        
         await new Promise<void>((resolve, reject) => {
             const img = new Image();
             img.src = slide.src;
@@ -357,8 +335,6 @@ export const Editor: React.FC<EditorProps> = ({
     }
 
     const scale = naturalWidth / displayWidth;
-
-    // 2. Layout Configuration
     const sidebarWidth = 600; 
     const totalWidth = naturalWidth + sidebarWidth;
     const totalHeight = Math.max(naturalHeight, 900);
@@ -366,7 +342,6 @@ export const Editor: React.FC<EditorProps> = ({
     canvas.width = totalWidth;
     canvas.height = totalHeight;
 
-    // 3. Draw Backgrounds
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, totalWidth, totalHeight);
     
@@ -383,7 +358,6 @@ export const Editor: React.FC<EditorProps> = ({
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // 4. Draw Sidebar Content
     const contentX = naturalWidth + 50;
     let currentY = 80;
 
@@ -406,7 +380,6 @@ export const Editor: React.FC<EditorProps> = ({
     ctx.stroke();
     currentY += 50;
 
-    // 5. Annotations Loop
     ctx.textBaseline = 'top';
 
     slide.annotations.forEach((ann, i) => {
@@ -424,7 +397,7 @@ export const Editor: React.FC<EditorProps> = ({
 
             ctx.strokeStyle = ann.color;
             ctx.lineWidth = 3 * scale; 
-            ctx.fillStyle = hexToRgba(ann.color, 0.2); // 20% opacity fill
+            ctx.fillStyle = hexToRgba(ann.color, 0.2); 
 
             if (ann.type === ToolType.RECTANGLE) {
                 ctx.fillRect(x, y, w, h);
@@ -481,58 +454,36 @@ export const Editor: React.FC<EditorProps> = ({
     });
   };
 
-  // --- Handlers for New Buttons ---
-
   const handleGeneratePDF = async () => {
     setIsProcessing(true);
     addToast("Generating PDF...", "info");
     
     try {
-        const doc = new jsPDF({
-            orientation: 'landscape',
-            unit: 'px',
-            format: 'a4' // Standard A4 landscape
-        });
-
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'px', format: 'a4' });
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
 
         for (let i = 0; i < slides.length; i++) {
             if (i > 0) doc.addPage();
-            
             const blob = await generateCompositeImage(slides[i]);
-            // Convert blob to base64 for jsPDF
             const base64 = await new Promise<string>((resolve) => {
                 const reader = new FileReader();
                 reader.onloadend = () => resolve(reader.result as string);
                 reader.readAsDataURL(blob);
             });
 
-            // Calculate aspect ratio to fit page
             const imgProps = doc.getImageProperties(base64);
             const imgRatio = imgProps.width / imgProps.height;
-            const pageRatio = pageWidth / pageHeight;
-
             let w = pageWidth;
             let h = pageWidth / imgRatio;
-
-            if (h > pageHeight) {
-                h = pageHeight;
-                w = pageHeight * imgRatio;
-            }
-            
-            // Center image
+            if (h > pageHeight) { h = pageHeight; w = pageHeight * imgRatio; }
             const x = (pageWidth - w) / 2;
             const y = (pageHeight - h) / 2;
-
             doc.addImage(base64, 'PNG', x, y, w, h);
         }
-
         doc.save(`BugSnap_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
         addToast("PDF Downloaded Successfully", "success");
-
     } catch (err) {
-        console.error("PDF Generation Failed", err);
         addToast("Failed to generate PDF", "error");
     } finally {
         setIsProcessing(false);
@@ -541,23 +492,15 @@ export const Editor: React.FC<EditorProps> = ({
 
   const handleCopySlide = async () => {
     setIsProcessing(true);
-    addToast("Copying to clipboard...", "info");
     try {
         const blob = await generateCompositeImage(activeSlide);
-        
-        // Use Clipboard API
         if (navigator.clipboard && navigator.clipboard.write) {
-             await navigator.clipboard.write([
-                 new ClipboardItem({
-                     [blob.type]: blob
-                 })
-             ]);
+             await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
              addToast("Slide image copied to clipboard!", "success");
         } else {
             throw new Error("Clipboard API not supported");
         }
     } catch (err) {
-        console.error("Copy Failed", err);
         addToast("Failed to copy image. Try using Chrome.", "error");
     } finally {
         setIsProcessing(false);
@@ -577,8 +520,8 @@ export const Editor: React.FC<EditorProps> = ({
      }
   };
 
-
-  const handleExportToClickUp = async (mode: ClickUpExportMode, listId: string) => {
+  // Updated Export Handler accepting Custom Title/Description
+  const handleExportToClickUp = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
     if (!savedConfig) {
@@ -590,7 +533,6 @@ export const Editor: React.FC<EditorProps> = ({
         setExportError("Missing ClickUp Token in Integrations.");
         return;
     }
-    // Note: listId comes from modal now
 
     setIsExporting(true);
     try {
@@ -598,8 +540,8 @@ export const Editor: React.FC<EditorProps> = ({
             const task = await createClickUpTask({
                 listId: listId,
                 token: config.clickUpToken,
-                title: activeSlide.name || 'Bug Report',
-                description: generateTaskDescription(activeSlide)
+                title: customTitle || activeSlide.name || 'Bug Report',
+                description: customDescription || generateTaskDescription(activeSlide)
             });
             
             const blob = await generateCompositeImage(activeSlide);
@@ -609,8 +551,8 @@ export const Editor: React.FC<EditorProps> = ({
             const masterTask = await createClickUpTask({
                 listId: listId,
                 token: config.clickUpToken,
-                title: `Bug Report - ${new Date().toLocaleString()}`,
-                description: generateMasterDescription(slides)
+                title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
+                description: customDescription || generateMasterDescription(slides)
             });
 
             for (const slide of slides) {
@@ -622,8 +564,8 @@ export const Editor: React.FC<EditorProps> = ({
             const masterTask = await createClickUpTask({
                 listId: listId,
                 token: config.clickUpToken,
-                title: `Bug Report - ${new Date().toLocaleString()}`,
-                description: generateMasterDescription(slides)
+                title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
+                description: customDescription || generateMasterDescription(slides)
             });
 
             for (const slide of slides) {
@@ -647,7 +589,6 @@ export const Editor: React.FC<EditorProps> = ({
         console.error(error);
         const msg = error instanceof Error ? error.message : 'Unknown error';
         setExportError(msg);
-        // Also show toast if it's not the specific proxy error which is handled in modal
         if (!msg.includes('corsdemo')) {
             addToast(msg, 'error');
         }
@@ -656,6 +597,7 @@ export const Editor: React.FC<EditorProps> = ({
     }
   };
 
+  // Slack Export remains the same for now
   const handleExportToSlack = async (mode: SlackExportMode) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
@@ -722,7 +664,6 @@ export const Editor: React.FC<EditorProps> = ({
         console.error(error);
         const msg = error instanceof Error ? error.message : 'Unknown error';
         setExportError(msg);
-         // Also show toast if it's not the specific proxy error
          if (!msg.includes('corsdemo')) {
             addToast(msg, 'error');
         }
@@ -760,7 +701,7 @@ export const Editor: React.FC<EditorProps> = ({
         error={exportError}
       />
 
-      {/* 1. Toolbar */}
+      {/* Toolbar */}
       <div className="h-14 border-b border-slate-200 flex items-center justify-between px-4 bg-white shrink-0 z-20">
         <div className="flex items-center h-full">
           {/* Shapes */}
@@ -805,7 +746,7 @@ export const Editor: React.FC<EditorProps> = ({
           </div>
 
           {/* Pagination */}
-          <div className="flex items-center gap-3 px-4 border-r border-slate-200 h-8">
+          <div className="flex items-center gap-3 px-4 h-8">
             <button onClick={handlePrevSlide} disabled={activeIndex <= 0} className="text-slate-500 disabled:text-slate-300 hover:text-slate-800">
               <ChevronLeft size={20} />
             </button>
@@ -816,29 +757,13 @@ export const Editor: React.FC<EditorProps> = ({
               <ChevronRight size={20} />
             </button>
           </div>
-
-          {/* Save/Delete Slide Actions */}
-          <div className="px-4 border-r border-slate-200 h-8 flex items-center gap-2">
-             <span className="text-sm font-semibold text-slate-700 cursor-default">Slide</span>
-             <button 
-                onClick={() => onDeleteSlide(activeSlide.id)}
-                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                title="Delete Current Slide"
-             >
-                <Trash2 size={16} />
-             </button>
-          </div>
           
-          {/* Integrations */}
-          <div className="flex items-center gap-2 px-4 h-8">
+          <div className="flex items-center gap-2 px-4 h-8 border-l border-slate-200 ml-4">
             <button 
                 onClick={() => setIsClickUpModalOpen(true)}
                 className="flex items-center gap-1.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
             >
                <Layers size={14} /> ClickUp
-            </button>
-            <button className="flex items-center gap-1.5 bg-[#0052CC] hover:bg-[#0047b3] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors opacity-50 cursor-not-allowed" title="Coming Soon">
-               <CreditCard size={14} /> Jira
             </button>
             <button 
                 onClick={() => setIsSlackModalOpen(true)}
@@ -849,7 +774,6 @@ export const Editor: React.FC<EditorProps> = ({
           </div>
         </div>
 
-        {/* Right Actions */}
         <div className="flex items-center gap-2">
            <button 
              onClick={handleGeneratePDF}
@@ -880,12 +804,10 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
       </div>
 
-      {/* 2. Main Layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar: Thumbnails */}
-        <div className="w-24 bg-white border-r border-slate-200 flex flex-col py-4 gap-3 relative shrink-0">
-           {/* Scrollable Area */}
-           <div className="flex-1 overflow-y-auto flex flex-col items-center gap-3 pb-20">
+        {/* Left Sidebar */}
+        <div className="w-24 bg-white border-r border-slate-200 flex flex-col py-4 relative shrink-0">
+           <div className="flex-1 overflow-y-auto flex flex-col items-center gap-3 px-1 no-scrollbar">
              {slides.map((s, i) => (
                <div 
                  key={s.id} 
@@ -897,15 +819,11 @@ export const Editor: React.FC<EditorProps> = ({
                  ) : (
                    <img src={s.src} alt={`Slide ${i+1}`} className="w-full h-full object-cover pointer-events-none" />
                  )}
-                 
-                 {/* Badge */}
                  {s.annotations.length > 0 && (
                    <div className="absolute bottom-0.5 right-0.5 bg-blue-600 text-white text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full shadow-sm">
                      {s.annotations.length}
                    </div>
                  )}
-
-                 {/* Delete Slide Button (On Hover) */}
                  <button 
                    onClick={(e) => {
                       e.stopPropagation();
@@ -918,51 +836,24 @@ export const Editor: React.FC<EditorProps> = ({
                  </button>
                </div>
              ))}
-           </div>
-           
-           {/* Fixed Add Button at Bottom */}
-           <div className="absolute bottom-0 left-0 right-0 p-3 bg-white border-t border-slate-100 flex justify-center" ref={addMenuRef}>
-             {isAddMenuOpen && (
-                <div className="absolute bottom-full left-2 mb-2 w-44 bg-white rounded-xl shadow-xl border border-slate-200 p-1 flex flex-col gap-1 z-50 animate-in slide-in-from-bottom-2 overflow-hidden">
-                   <button 
-                      onClick={() => { setIsAddMenuOpen(false); onCaptureScreen(); }}
-                      className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-blue-600 transition-colors"
-                   >
-                      <Camera size={16} className="text-blue-500" />
-                      Capture Screen
-                   </button>
-                   <button 
-                      onClick={() => { setIsAddMenuOpen(false); onRecordVideo(); }}
-                      className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-purple-600 transition-colors"
-                   >
-                      <Video size={16} className="text-purple-500" />
-                      Record Video
-                   </button>
-                   <button 
-                      onClick={() => { setIsAddMenuOpen(false); onAddSlide(); }}
-                      className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-emerald-600 transition-colors"
-                   >
-                      <Upload size={16} className="text-emerald-500" />
-                      Upload File
-                   </button>
-                </div>
-             )}
-             <button 
-               onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-               className={`w-14 h-14 border-2 border-dashed rounded-xl flex items-center justify-center transition-all shadow-sm ${isAddMenuOpen ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50'}`}
-             >
-               <Plus size={24} className={isAddMenuOpen ? 'rotate-45 transition-transform' : 'transition-transform'} />
-             </button>
+             
+             {/* Sticky Add Button */}
+             <div className="sticky bottom-0 w-full flex justify-center pb-2 pt-2 bg-white z-10 mt-auto" ref={addMenuRef}>
+                {isAddMenuOpen && (
+                   <div className="absolute bottom-full left-1 mb-2 w-44 bg-white rounded-xl shadow-xl border border-slate-200 p-1 flex flex-col gap-1 z-50 animate-in slide-in-from-bottom-2 overflow-hidden">
+                       <button onClick={() => { setIsAddMenuOpen(false); onCaptureScreen(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-blue-600 transition-colors"><Camera size={16} className="text-blue-500" /> Capture Screen</button>
+                       <button onClick={() => { setIsAddMenuOpen(false); onRecordVideo(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-purple-600 transition-colors"><Video size={16} className="text-purple-500" /> Record Video</button>
+                       <button onClick={() => { setIsAddMenuOpen(false); onAddSlide(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-emerald-600 transition-colors"><Upload size={16} className="text-emerald-500" /> Upload File</button>
+                   </div>
+                )}
+                <button onClick={() => setIsAddMenuOpen(!isAddMenuOpen)} className={`w-14 h-14 border-2 border-dashed rounded-xl flex items-center justify-center transition-all shadow-sm bg-white ${isAddMenuOpen ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50'}`}><Plus size={24} className={isAddMenuOpen ? 'rotate-45 transition-transform' : 'transition-transform'} /></button>
+             </div>
            </div>
         </div>
 
-        {/* Center: Canvas */}
+        {/* Canvas */}
         <div className="flex-1 bg-slate-100 overflow-hidden relative flex items-center justify-center">
-           {/* Dot Grid Background */}
-           <div className="absolute inset-0 opacity-20 pointer-events-none" 
-                style={{ backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
-           </div>
-
+           <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
            <div 
              ref={containerRef}
              className="relative shadow-2xl bg-black select-none max-w-[95%] max-h-[90%]"
@@ -972,206 +863,65 @@ export const Editor: React.FC<EditorProps> = ({
              onMouseLeave={handleMouseUp}
            >
               {activeSlide.type === 'video' ? (
-                <video
-                  ref={mediaRef as any}
-                  src={activeSlide.src}
-                  className="max-h-[85vh] block"
-                  onTimeUpdate={() => {
-                    if (mediaRef.current) setCurrentTime((mediaRef.current as HTMLVideoElement).currentTime);
-                  }}
-                />
+                <video ref={mediaRef as any} src={activeSlide.src} className="max-h-[85vh] block" onTimeUpdate={() => { if (mediaRef.current) setCurrentTime((mediaRef.current as HTMLVideoElement).currentTime); }}/>
               ) : (
-                <img
-                  ref={mediaRef as any}
-                  src={activeSlide.src}
-                  alt="Canvas"
-                  className="max-h-[85vh] block draggable-none"
-                  draggable={false}
-                />
+                <img ref={mediaRef as any} src={activeSlide.src} alt="Canvas" className="max-h-[85vh] block draggable-none" draggable={false} />
               )}
-
-              {/* SVG Overlay */}
+              {/* Annotations Overlay */}
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
                 {annotations.map((ann, index) => {
-                   if (activeSlide.type === 'video' && ann.timestamp !== undefined) {
-                     if (Math.abs(ann.timestamp - currentTime) > 0.5) return null;
-                   }
-                   
+                   if (activeSlide.type === 'video' && ann.timestamp !== undefined && Math.abs(ann.timestamp - currentTime) > 0.5) return null;
                    const isSelected = selectedAnnotationId === ann.id;
                    const minX = Math.min(ann.start.x, ann.end.x);
                    const minY = Math.min(ann.start.y, ann.end.y);
                    const width = Math.abs(ann.end.x - ann.start.x);
                    const height = Math.abs(ann.end.y - ann.start.y);
-                   
                    return (
                      <g key={ann.id} className="pointer-events-auto cursor-pointer group" onClick={(e) => { e.stopPropagation(); setSelectedAnnotationId(ann.id); }}>
-                       {ann.type === ToolType.RECTANGLE && (
-                         <rect
-                           x={minX}
-                           y={minY}
-                           width={width}
-                           height={height}
-                           fill={hexToRgba(ann.color, 0.2)}
-                           stroke={isSelected ? "#3b82f6" : ann.color}
-                           strokeWidth={isSelected ? 3 : 3}
-                           rx={4}
-                         />
-                       )}
-                       {ann.type === ToolType.CIRCLE && (
-                         <ellipse
-                           cx={minX + width / 2}
-                           cy={minY + height / 2}
-                           rx={width / 2}
-                           ry={height / 2}
-                           fill={hexToRgba(ann.color, 0.2)}
-                           stroke={isSelected ? "#3b82f6" : ann.color}
-                           strokeWidth={isSelected ? 3 : 3}
-                         />
-                       )}
-                       
-                       {/* Resize Handles (Only when selected) */}
-                       {isSelected && (
-                          <>
-                             {/* TL */}
-                             <rect x={minX - 5} y={minY - 5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2" />
-                             {/* TR */}
-                             <rect x={minX + width - 5} y={minY - 5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2" />
-                             {/* BL */}
-                             <rect x={minX - 5} y={minY + height - 5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2" />
-                             {/* BR */}
-                             <rect x={minX + width - 5} y={minY + height - 5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2" />
-                          </>
-                       )}
-
-                       {/* Number Badge */}
-                       <g transform={`translate(${minX}, ${minY})`}>
-                         <rect x="-12" y="-12" width="24" height="24" rx="6" fill={isSelected ? "#3b82f6" : ann.color} />
-                         <text x="0" y="5" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">{index + 1}</text>
-                       </g>
+                       {ann.type === ToolType.RECTANGLE && <rect x={minX} y={minY} width={width} height={height} fill={hexToRgba(ann.color, 0.2)} stroke={isSelected ? "#3b82f6" : ann.color} strokeWidth={3} rx={4} />}
+                       {ann.type === ToolType.CIRCLE && <ellipse cx={minX + width / 2} cy={minY + height / 2} rx={width / 2} ry={height / 2} fill={hexToRgba(ann.color, 0.2)} stroke={isSelected ? "#3b82f6" : ann.color} strokeWidth={3} />}
+                       {isSelected && (<><rect x={minX-5} y={minY-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/><rect x={minX+width-5} y={minY-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/><rect x={minX-5} y={minY+height-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/><rect x={minX+width-5} y={minY+height-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/></>)}
+                       <g transform={`translate(${minX}, ${minY})`}><rect x="-12" y="-12" width="24" height="24" rx="6" fill={isSelected ? "#3b82f6" : ann.color} /><text x="0" y="5" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">{index + 1}</text></g>
                      </g>
                    );
                 })}
-
-                {/* Drawing Preview */}
                 {isDrawing && startPoint && currentPoint && !resizeHandle && (
                    <g>
-                      {selectedTool === ToolType.RECTANGLE && (
-                        <rect
-                          x={Math.min(startPoint.x, currentPoint.x)}
-                          y={Math.min(startPoint.y, currentPoint.y)}
-                          width={Math.abs(currentPoint.x - startPoint.x)}
-                          height={Math.abs(currentPoint.y - startPoint.y)}
-                          fill="rgba(59, 130, 246, 0.2)"
-                          stroke="#3b82f6"
-                          strokeWidth={2}
-                          strokeDasharray="4"
-                        />
-                      )}
-                      {selectedTool === ToolType.CIRCLE && (
-                         <ellipse
-                           cx={startPoint.x + (currentPoint.x - startPoint.x) / 2}
-                           cy={startPoint.y + (currentPoint.y - startPoint.y) / 2}
-                           rx={Math.abs((currentPoint.x - startPoint.x) / 2)}
-                           ry={Math.abs((currentPoint.y - startPoint.y) / 2)}
-                           fill="rgba(59, 130, 246, 0.2)"
-                           stroke="#3b82f6"
-                           strokeWidth={2}
-                           strokeDasharray="4"
-                         />
-                      )}
+                      {selectedTool === ToolType.RECTANGLE && <rect x={Math.min(startPoint.x, currentPoint.x)} y={Math.min(startPoint.y, currentPoint.y)} width={Math.abs(currentPoint.x - startPoint.x)} height={Math.abs(currentPoint.y - startPoint.y)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4" />}
+                      {selectedTool === ToolType.CIRCLE && <ellipse cx={startPoint.x + (currentPoint.x - startPoint.x) / 2} cy={startPoint.y + (currentPoint.y - startPoint.y) / 2} rx={Math.abs((currentPoint.x - startPoint.x) / 2)} ry={Math.abs((currentPoint.y - startPoint.y) / 2)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4" />}
                    </g>
                 )}
               </svg>
            </div>
-
-           {/* Video Controls Overlay */}
            {activeSlide.type === 'video' && (
              <div className="absolute bottom-8 bg-slate-900/80 backdrop-blur text-white p-2 rounded-full flex items-center gap-4 px-6 shadow-xl z-10">
-                <button onClick={() => {
-                  if (mediaRef.current) {
-                    if (isPlaying) (mediaRef.current as HTMLVideoElement).pause();
-                    else (mediaRef.current as HTMLVideoElement).play();
-                    setIsPlaying(!isPlaying);
-                  }
-                }}>
-                  {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-                </button>
+                <button onClick={() => { if (mediaRef.current) { if (isPlaying) (mediaRef.current as HTMLVideoElement).pause(); else (mediaRef.current as HTMLVideoElement).play(); setIsPlaying(!isPlaying); } }}>{isPlaying ? <Pause size={20} /> : <Play size={20} />}</button>
                 <span className="font-mono text-sm">{currentTime.toFixed(1)}s</span>
              </div>
            )}
         </div>
 
-        {/* Right Sidebar: Comments */}
+        {/* Right Sidebar */}
         <div className="w-80 bg-white border-l border-slate-200 flex flex-col shrink-0">
            <div className="h-12 border-b border-slate-100 flex items-center justify-between px-4">
              <h3 className="font-bold text-slate-800 text-lg">Comments</h3>
-             <button className="text-slate-400 hover:text-blue-600">
-               <Copy size={16} />
-             </button>
+             <button className="text-slate-400 hover:text-blue-600"><Copy size={16} /></button>
            </div>
-           
            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {annotations.length === 0 ? (
-                <div className="text-center mt-10 opacity-40">
-                   <MousePointer2 size={48} className="mx-auto mb-2" />
-                   <p className="text-sm">Draw a shape to start annotating</p>
-                </div>
+                <div className="text-center mt-10 opacity-40"><MousePointer2 size={48} className="mx-auto mb-2" /><p className="text-sm">Draw a shape to start annotating</p></div>
               ) : (
                 annotations.map((ann, index) => (
-                  <div 
-                    key={ann.id} 
-                    className={`relative group rounded-xl border p-3 transition-all ${selectedAnnotationId === ann.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-blue-300'}`}
-                    onClick={() => setSelectedAnnotationId(ann.id)}
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                       {/* Badge color matches annotation color */}
-                       <div className="w-6 h-6 text-white rounded-md flex items-center justify-center text-xs font-bold shrink-0" style={{ backgroundColor: ann.color }}>
-                         {index + 1}
-                       </div>
-                       <div className="ml-auto flex">
-                          <button 
-                             onClick={(e) => { e.stopPropagation(); handleDeleteSelected(); }} 
-                             className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                             <Trash2 size={14} />
-                          </button>
-                       </div>
-                    </div>
-                    <textarea 
-                      className="w-full text-sm bg-transparent border-none resize-none focus:ring-0 p-0 text-slate-700 placeholder:text-slate-300"
-                      placeholder="Describe the issue..."
-                      rows={2}
-                      value={ann.comment}
-                      onChange={(e) => handleCommentChange(ann.id, e.target.value)}
-                    />
-                    {/* Auto-Fix button */}
-                    {ann.comment.length > 3 && (
-                       <div className="mt-2 flex">
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }}
-                            disabled={aiLoadingId === ann.id}
-                            className="flex items-center gap-1.5 text-[10px] font-bold text-purple-600 bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded-md transition-colors"
-                          >
-                            <Wand2 size={12} className={aiLoadingId === ann.id ? 'animate-spin' : ''} />
-                            {aiLoadingId === ann.id ? 'Refining...' : 'Auto-Fix Grammar'}
-                          </button>
-                       </div>
-                    )}
+                  <div key={ann.id} className={`relative group rounded-xl border p-3 transition-all ${selectedAnnotationId === ann.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-blue-300'}`} onClick={() => setSelectedAnnotationId(ann.id)}>
+                    <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 text-white rounded-md flex items-center justify-center text-xs font-bold shrink-0" style={{ backgroundColor: ann.color }}>{index + 1}</div><div className="ml-auto flex"><button onClick={(e) => { e.stopPropagation(); handleDeleteSelected(); }} className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button></div></div>
+                    <textarea className="w-full text-sm bg-transparent border-none resize-none focus:ring-0 p-0 text-slate-700 placeholder:text-slate-300" placeholder="Describe the issue..." rows={2} value={ann.comment} onChange={(e) => handleCommentChange(ann.id, e.target.value)} />
+                    {ann.comment.length > 3 && (<div className="mt-2 flex"><button onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }} disabled={aiLoadingId === ann.id} className="flex items-center gap-1.5 text-[10px] font-bold text-purple-600 bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded-md transition-colors"><Wand2 size={12} className={aiLoadingId === ann.id ? 'animate-spin' : ''} />{aiLoadingId === ann.id ? 'Refining...' : 'Auto-Fix Grammar'}</button></div>)}
                   </div>
                 ))
               )}
            </div>
-
            <div className="p-4 border-t border-slate-100">
-              <button 
-                onClick={() => {
-                   setAnnotations([]);
-                   onUpdateSlide({...activeSlide, annotations: []});
-                }}
-                className="w-full py-3 border border-slate-200 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition font-medium"
-              >
-                Discard All
-              </button>
+              <button onClick={() => { setAnnotations([]); onUpdateSlide({...activeSlide, annotations: []}); }} className="w-full py-3 border border-slate-200 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition font-medium">Discard All</button>
            </div>
         </div>
       </div>

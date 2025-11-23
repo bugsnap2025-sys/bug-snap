@@ -63,3 +63,54 @@ export const generateMarkdownReport = async (slideTitle: string, annotations: an
     return "Error generating report.";
   }
 };
+
+export const generateAIReportMetadata = async (
+  slideName: string, 
+  annotations: any[]
+): Promise<{ title: string, description: string }> => {
+  if (!apiKey) {
+    return { title: slideName, description: "" };
+  }
+
+  try {
+    const modelId = 'gemini-2.5-flash';
+    const annotationsList = annotations.map((a, i) => `Issue ${i + 1}: ${a.comment}`).join('\n');
+    
+    const prompt = `
+      Analyze the following bug report observations and generate a concise Title and a detailed Description.
+      
+      Context: User is reporting a UI/UX bug on a web application.
+      Slide Name: ${slideName}
+      Observations:
+      ${annotationsList}
+      
+      Output strictly in JSON format:
+      {
+        "title": "A short, descriptive summary (max 10 words)",
+        "description": "A structured markdown description including a summary of issues."
+      }
+    `;
+
+    const response = await ai.models.generateContent({
+      model: modelId,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const text = response.text;
+    if (text) {
+        return JSON.parse(text);
+    }
+    throw new Error("Empty response");
+
+  } catch (error) {
+    console.error("AI Metadata generation failed:", error);
+    // Fallback
+    return { 
+        title: slideName, 
+        description: annotations.map((a, i) => `${i + 1}. ${a.comment}`).join('\n') 
+    };
+  }
+};

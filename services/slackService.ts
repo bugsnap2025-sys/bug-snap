@@ -131,12 +131,16 @@ export const fetchSlackHistory = async (token: string, channel: string): Promise
 // --- Helper to Format Dashboard Summary ---
 export const generateDashboardSummary = (metrics: any): string => {
     const rate = metrics.total > 0 ? metrics.resolutionRate : 0;
-    const icon = rate > 80 ? ':rocket:' : rate > 50 ? ':chart_with_upwards_trend:' : ':construction:';
     
-    return `*BugSnap Dashboard Report* ${icon}\n\n` +
-           `*Total Reports:* ${metrics.total}\n` +
-           `*Open Issues:* ${metrics.openCount}\n` +
-           `*Resolution Rate:* ${rate}%\n\n` +
+    // Format Priority breakdown
+    const priorityText = (metrics.priorityData || [])
+        .map((p: any) => `• ${p.name}: ${p.count}`)
+        .join('\n');
+
+    return `*BugSnap Dashboard Report* :bar_chart:\n\n` +
+           `:white_check_mark: *Resolved Issues:* ${metrics.resolvedCount}\n` +
+           `:hourglass_flowing_sand: *Pending Issues:* ${metrics.openCount}\n\n` +
+           `*Priority Breakdown:*\n${priorityText || 'No active issues'}\n\n` +
            `_Generated via BugSnap Dashboard_`;
 };
 

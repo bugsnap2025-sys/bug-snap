@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle2, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, List } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
-import { extractListId } from '../services/clickUpService';
 import { extractChannelId } from '../services/slackService';
 
 interface IntegrationModalProps {
@@ -21,7 +20,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
 }) => {
   const [formData, setFormData] = useState<Partial<IntegrationConfig>>({});
   const [error, setError] = useState<string | null>(null);
-
+  
   useEffect(() => {
     if (isOpen && source) {
       setFormData(currentConfig);
@@ -44,7 +43,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             setError("Personal Access Token is required.");
             return;
         }
-        // List ID is now handled in the Export Modal, not here.
+        // List selection is now handled in the Dashboard/Export modal
     } 
     else if (source === 'Slack') {
         if (!newConfig.slackToken || !newConfig.slackToken.startsWith('xoxb-')) {
@@ -63,7 +62,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         newConfig.slackChannel = extractedId;
     }
     else if (source === 'Jira') {
-        // Placeholder validation for Jira
         if (!newConfig.jiraUrl || !newConfig.jiraToken || !newConfig.jiraEmail) {
              setError("All fields are required for Jira.");
              return;
@@ -79,9 +77,9 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     switch(source) {
         case 'ClickUp':
             return (
-                <div className="space-y-4">
+                <div className="space-y-6">
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Personal Access Token (pk_...)</label>
+                        <label className="block text-sm font-bold text-slate-700 mb-1">Personal Access Token</label>
                         <div className="relative">
                             <input 
                                 type="password" 
@@ -93,7 +91,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                             <Lock className="absolute right-3 top-3.5 text-slate-400" size={16} />
                         </div>
                         <p className="text-xs text-slate-500 mt-2">
-                            The List ID will be requested when you export a task, allowing you to choose different lists for different reports.
+                           List selection is now available directly on the Dashboard and Export screen.
                         </p>
                     </div>
                 </div>
