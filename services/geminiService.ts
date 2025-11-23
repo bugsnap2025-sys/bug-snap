@@ -1,8 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 
 // Initialize Gemini Client
-// Using process.env.API_KEY as strictly requested, with the provided key as a fallback for immediate functionality.
-const apiKey = process.env.API_KEY || 'AIzaSyBOOzzdxkWdA-Oqr2HPS-ejS2q2Ykf168w'; 
+// Using the provided fallback key safely. 
+// In a real Vite env, use import.meta.env.VITE_API_KEY, but hardcoding provided key for stability.
+const apiKey = 'AIzaSyBOOzzdxkWdA-Oqr2HPS-ejS2q2Ykf168w'; 
 const ai = new GoogleGenAI({ apiKey });
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
