@@ -23,7 +23,10 @@ import {
   Aperture,
   X,
   Home,
-  PenTool
+  PenTool,
+  User as UserIcon,
+  Moon,
+  Sun
 } from 'lucide-react';
 
 // REPLACE WITH YOUR ACTUAL GOOGLE CLIENT ID FROM GOOGLE CLOUD CONSOLE
@@ -45,7 +48,7 @@ const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap
   };
 
   return (
-    <div className={`h-screen w-screen flex items-center justify-center bg-slate-900 text-white overflow-hidden transition-opacity duration-75 ${isSnapping ? 'opacity-0' : 'opacity-100'}`}>
+    <div className={`h-screen w-screen flex items-center justify-center bg-[#0f0f0f] text-white overflow-hidden transition-opacity duration-75 ${isSnapping ? 'opacity-0' : 'opacity-100'}`}>
       <div className="flex items-center gap-4 px-6 py-3 w-full justify-between">
         
         {/* Brand / Status */}
@@ -54,8 +57,8 @@ const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap
               {flashing ? <Check size={24} /> : <Aperture size={24} />}
            </div>
            <div className="flex flex-col leading-tight">
-             <span className="font-bold text-sm text-slate-200">BugSnap Active</span>
-             <span className="text-xs text-slate-400 font-mono">{slideCount} screenshots</span>
+             <span className="font-bold text-sm text-zinc-200">BugSnap Active</span>
+             <span className="text-xs text-zinc-400 font-mono">{slideCount} screenshots</span>
            </div>
         </div>
 
@@ -64,17 +67,17 @@ const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap
            <button 
              onClick={handleSnap}
              disabled={isSnapping}
-             className="bg-white text-slate-900 hover:bg-blue-50 active:scale-95 transition-all px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 shadow-lg disabled:opacity-50"
+             className="bg-white text-zinc-900 hover:bg-blue-50 active:scale-95 transition-all px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 shadow-lg disabled:opacity-50"
            >
              <Camera size={18} />
              SNAP
            </button>
            
-           <div className="w-px h-8 bg-slate-700 mx-1"></div>
+           <div className="w-px h-8 bg-zinc-700 mx-1"></div>
 
            <button 
              onClick={onStop}
-             className="text-slate-400 hover:text-red-400 hover:bg-red-950/30 p-2.5 rounded-lg transition-colors"
+             className="text-zinc-400 hover:text-red-400 hover:bg-red-950/30 p-2.5 rounded-lg transition-colors"
              title="Finish Session"
            >
              <StopCircle size={20} />
@@ -90,20 +93,20 @@ const RestrictedModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm p-4 animate-in fade-in">
-       <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200 relative">
-           <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+       <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200 dark:border-[#272727] relative">
+           <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300">
              <X size={20} />
            </button>
-           <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-5 mx-auto">
+           <div className="w-14 h-14 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-500 rounded-full flex items-center justify-center mb-5 mx-auto">
               <ExternalLink size={28} />
            </div>
-           <h2 className="text-xl font-bold text-center text-slate-900 mb-2">Open in New Tab Required</h2>
-           <p className="text-center text-slate-600 text-sm mb-6 leading-relaxed">
+           <h2 className="text-xl font-bold text-center text-slate-900 dark:text-white mb-2">Open in New Tab Required</h2>
+           <p className="text-center text-slate-600 dark:text-zinc-400 text-sm mb-6 leading-relaxed">
               For security reasons, browsers block the <strong>Floating Widget</strong> feature inside this preview frame.
               <br/><br/>
               Please use the <strong>"Open in New Tab"</strong> button in your editor's toolbar to launch the app in a standalone tab.
            </p>
-           <button onClick={onClose} className="w-full bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition">
+           <button onClick={onClose} className="w-full bg-slate-900 dark:bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-slate-800 dark:hover:bg-blue-700 transition">
               Understood
            </button>
        </div>
@@ -151,6 +154,16 @@ const App: React.FC = () => {
     return AppView.LOGIN;
   });
 
+  // 5. Dark Mode State
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('bugsnap_theme');
+        if (saved) return saved === 'dark';
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+
   const [isDragging, setIsDragging] = useState(false);
   const [origin, setOrigin] = useState('');
   const [copied, setCopied] = useState(false);
@@ -175,6 +188,20 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { addToast } = useToast();
 
+  // --- Theme Effect ---
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+      localStorage.setItem('bugsnap_theme', 'dark');
+    } else {
+      root.classList.remove('dark');
+      localStorage.setItem('bugsnap_theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  const toggleTheme = () => setIsDarkMode(!isDarkMode);
+
   // --- Persistence Effect ---
   useEffect(() => {
     localStorage.setItem('bugsnap_slides', JSON.stringify(slides));
@@ -197,17 +224,6 @@ const App: React.FC = () => {
     addToast(`Welcome back, ${user.name}!`, 'success');
   };
 
-  const handleDemoLogin = () => {
-    const demoUser: User = {
-      id: 'demo-user',
-      name: 'Demo Tester',
-      email: 'tester@bugsnap.demo',
-      isDemo: true,
-      avatar: `https://ui-avatars.com/api/?name=Demo+Tester&background=0D8ABC&color=fff`
-    };
-    handleLoginSuccess(demoUser);
-  };
-
   const handleLogout = () => {
     setUser(null);
     setView(AppView.LOGIN);
@@ -216,6 +232,16 @@ const App: React.FC = () => {
     localStorage.removeItem('bugsnap_user');
     localStorage.removeItem('bugsnap_slides'); // Clear slides from storage on logout
     addToast('Logged out successfully', 'info');
+  };
+
+  const handleGuestLogin = () => {
+      const guestUser: User = {
+          id: 'guest-' + Date.now(),
+          name: 'Guest User',
+          email: 'guest@bugsnap.dev',
+          isDemo: true
+      };
+      handleLoginSuccess(guestUser);
   };
 
   // --- Google Auth Implementation ---
@@ -280,7 +306,7 @@ const App: React.FC = () => {
                 btnContainer.innerHTML = '';
                 (window as any).google.accounts.id.renderButton(
                     btnContainer,
-                    { theme: "outline", size: "large", width: "350", text: "continue_with" } 
+                    { theme: isDarkMode ? "filled_black" : "outline", size: "large", width: "350", text: "continue_with" } 
                 );
                 return true; // Success
             }
@@ -307,7 +333,7 @@ const App: React.FC = () => {
             clearTimeout(timeoutId);
         };
     }
-  }, [user, view]); // Re-run if user logs out or view changes
+  }, [user, view, isDarkMode]); // Re-run if user logs out or view changes or theme changes
 
 
   const copyOrigin = () => {
@@ -627,27 +653,22 @@ const App: React.FC = () => {
       } catch (err) {
           console.error("Floating capture session failed", err);
           
-          // Handle Iframe Security Block specifically
-          if (err instanceof Error && err.name === 'NotAllowedError') {
-              // Usually this means permission denied OR blocked context
-              if (window.self !== window.top) {
-                  // We are in an iframe, attempt fallback
-                  const url = window.location.href;
-                  if (!url || url.startsWith('about:') || url.startsWith('data:') || url.startsWith('blob:')) {
+          // Improved Error Handling
+          if (err instanceof Error) {
+              if (err.name === 'NotAllowedError') {
+                  // User denied permission or browser blocked it
+                  if (window.self !== window.top) {
+                      // If in iframe, it might be the PiP restriction
                       setIsRestrictedModalOpen(true);
                   } else {
-                      addToast("Opening app in new tab for Floating Widget...", "info");
-                      const newWindow = window.open(url, '_blank');
-                      if (!newWindow) {
-                         setIsRestrictedModalOpen(true);
-                      }
+                      addToast("Screen capture permission denied.", 'error');
                   }
-                  return; // EXIT FUNCTION to prevent generic error toast
+              } else {
+                  addToast(`Failed to start session: ${err.message}`, 'error');
               }
+          } else {
+              addToast("Failed to start capture session.", 'error');
           }
-          
-          // Only show generic error if we didn't handle the restricted modal case
-          addToast("Failed to start session. " + (err instanceof Error ? err.message : ''), 'error');
       }
   };
 
@@ -895,67 +916,44 @@ const App: React.FC = () => {
 
   if (!user || view === AppView.LOGIN) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-100">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-6 flex items-center justify-center text-white shadow-lg shadow-blue-200">
+      <div className="min-h-screen bg-slate-50 dark:bg-[#0f0f0f] flex flex-col items-center justify-center p-4 transition-colors">
+        <button 
+            onClick={toggleTheme}
+            className="absolute top-6 right-6 p-2 rounded-full bg-white dark:bg-[#1e1e1e] shadow-sm border border-slate-200 dark:border-[#272727] text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#272727] transition"
+        >
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+
+        <div className="bg-white dark:bg-[#1e1e1e] p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-100 dark:border-[#272727]">
+          <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-6 flex items-center justify-center text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20">
             <Bug size={32} />
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-2">BugSnap</h1>
-          <p className="text-slate-500 mb-8">AI-powered visual bug reporting. Capture, annotate, and push to Jira/ClickUp in seconds.</p>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">BugSnap</h1>
+          <p className="text-slate-500 dark:text-zinc-400 mb-8">AI-powered visual bug reporting. Capture, annotate, and push to Jira/ClickUp in seconds.</p>
           
-          <div className="space-y-4">
-            {/* Demo Mode Button (Primary in Preview Env) */}
-            <button 
-              onClick={handleDemoLogin}
-              className={`w-full font-medium py-2.5 px-4 rounded-lg transition shadow-md flex items-center justify-center gap-2 ${isPreviewEnv ? 'bg-blue-600 text-white hover:bg-blue-700 ring-2 ring-blue-200' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
-            >
-              {isPreviewEnv && <Zap size={16} fill="currentColor" />}
-              {isPreviewEnv ? "Try Demo Mode (Recommended)" : "Try Demo Mode"}
-            </button>
-            
-            {/* Google Sign In Container */}
-            <div className="min-h-[44px] w-full flex justify-center relative">
+          {/* Google Sign In Container */}
+            <div className="min-h-[44px] w-full flex justify-center relative flex-col gap-4">
                  <div id="googleSignInButton" className="w-full flex justify-center">
                     {/* Placeholder to prevent layout shift while script loads */}
-                    <div className="w-[350px] h-[44px] bg-slate-100 rounded animate-pulse"></div>
+                    <div className="w-[350px] h-[44px] bg-slate-100 dark:bg-[#272727] rounded animate-pulse"></div>
                  </div>
+                 
+                 <div className="flex items-center gap-3 w-full max-w-[350px] mx-auto">
+                    <div className="h-px bg-slate-200 dark:bg-[#272727] flex-1"></div>
+                    <span className="text-xs text-slate-400 font-medium">OR</span>
+                    <div className="h-px bg-slate-200 dark:bg-[#272727] flex-1"></div>
+                 </div>
+                 
+                 <button 
+                    onClick={handleGuestLogin}
+                    className="flex items-center justify-center gap-2 text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white font-medium text-sm transition-colors py-2 group"
+                 >
+                    <UserIcon size={16} className="group-hover:text-blue-600 transition-colors" />
+                    Continue as Guest (No Login)
+                 </button>
             </div>
 
-            {isPreviewEnv && (
-                 <div className="bg-blue-50 text-blue-800 text-xs p-3 rounded-lg flex items-start gap-2 text-left border border-blue-100">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <p>
-                        <strong>Note:</strong> Google Login requires strict URL whitelisting. 
-                        Since this preview URL is dynamic, use <strong>Demo Mode</strong> to test all features instantly.
-                    </p>
-                 </div>
-            )}
-            
-            {/* Configuration Helper for persistent users */}
-            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-left">
-                <div className="flex gap-2 items-start mb-2">
-                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5"/>
-                    <p className="text-xs font-bold text-amber-800">
-                        Seeing "Error 400: origin_mismatch"?
-                    </p>
-                </div>
-                <p className="text-xs text-amber-700 mb-2">
-                    This error happens because your specific preview URL has not been added to Google Cloud Console.
-                </p>
-                <div className="flex items-center gap-2 bg-white border border-amber-200 rounded p-2 mb-2">
-                    <code className="text-[10px] text-slate-600 font-mono break-all flex-1">
-                        {origin}
-                    </code>
-                    <button onClick={copyOrigin} className="text-slate-400 hover:text-blue-600" title="Copy URL">
-                        {copied ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
-                    </button>
-                </div>
-                <p className="text-[10px] text-amber-600">
-                    Add this URL to "Authorized JavaScript origins" in Google Cloud, or just use <strong>Demo Mode</strong> above.
-                </p>
-            </div>
-          </div>
-          <p className="mt-6 text-xs text-slate-400">v1.0.0 • No credit card required</p>
+          <p className="mt-8 text-xs text-slate-400">v1.0.0 • No credit card required</p>
         </div>
       </div>
     );
@@ -963,7 +961,7 @@ const App: React.FC = () => {
 
   return (
     <div 
-      className="h-screen flex flex-col bg-slate-50 relative overflow-hidden"
+      className="h-screen flex flex-col bg-slate-50 dark:bg-[#0f0f0f] relative overflow-hidden transition-colors"
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -981,18 +979,18 @@ const App: React.FC = () => {
       <CropOverlay />
 
       {/* Top Navigation Bar */}
-      <nav className="bg-white border-b border-slate-200 h-14 flex items-center justify-between px-4 shrink-0 z-30">
+      <nav className="bg-white dark:bg-[#0f0f0f] border-b border-slate-200 dark:border-[#272727] h-14 flex items-center justify-between px-4 shrink-0 z-30 transition-colors">
         <div className="flex items-center gap-6">
            {/* Logo */}
-           <div className="flex items-center gap-2 text-slate-900 font-bold text-lg cursor-pointer select-none" onClick={() => setView(AppView.DASHBOARD)}>
+           <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-lg cursor-pointer select-none" onClick={() => setView(AppView.DASHBOARD)}>
               <span className="text-blue-600 font-extrabold">Bug</span>Snap
            </div>
 
            {/* Pill Navigation */}
-           <div className="bg-slate-100 p-1 rounded-lg flex gap-1">
+           <div className="bg-slate-100 dark:bg-[#1e1e1e] p-1 rounded-lg flex gap-1">
              <button 
                onClick={() => setView(AppView.DASHBOARD)}
-               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.DASHBOARD ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.DASHBOARD ? 'bg-white dark:bg-[#272727] text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'}`}
              >
                <Home size={14} />
                Dashboard
@@ -1002,7 +1000,7 @@ const App: React.FC = () => {
              {slides.length > 0 && (
                  <button 
                    onClick={() => setView(AppView.EDITOR)}
-                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.EDITOR ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.EDITOR ? 'bg-white dark:bg-[#272727] text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'}`}
                  >
                    <PenTool size={14} />
                    Current Session ({slides.length})
@@ -1011,7 +1009,7 @@ const App: React.FC = () => {
 
              <button 
                onClick={() => setView(AppView.INTEGRATIONS)}
-               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.INTEGRATIONS ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.INTEGRATIONS ? 'bg-white dark:bg-[#272727] text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'}`}
              >
                <Zap size={14} />
                Integrations
@@ -1025,21 +1023,33 @@ const App: React.FC = () => {
           {view === AppView.EDITOR && (
              <button 
                onClick={handleFloatingCaptureSession}
-               className="text-slate-500 hover:bg-blue-50 hover:text-blue-600 p-2 rounded-lg transition hidden md:block"
+               className="text-slate-500 dark:text-zinc-400 hover:bg-blue-50 dark:hover:bg-[#272727] hover:text-blue-600 dark:hover:text-blue-400 p-2 rounded-lg transition hidden md:block"
                title="Launch Floating Snap Widget"
              >
                <LayoutTemplate size={18} />
              </button>
           )}
           
-          <div className="w-px h-5 bg-slate-200 mx-1"></div>
+          <button 
+            onClick={toggleTheme}
+            className="text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#272727] p-2 rounded-lg transition"
+            title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+
+          <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
           
           <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition p-1" title="Logout">
               <LogOut size={18} />
           </button>
 
-          {user.avatar && (
-              <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full border border-slate-200" title={user.name} />
+          {user.avatar ? (
+              <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full border border-slate-200 dark:border-[#272727]" title={user.name} />
+          ) : (
+              <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-[#1e1e1e] flex items-center justify-center text-slate-500 dark:text-zinc-400 font-bold border border-slate-300 dark:border-[#272727]" title={user.name}>
+                  {user.name.charAt(0)}
+              </div>
           )}
         </div>
       </nav>
@@ -1066,12 +1076,13 @@ const App: React.FC = () => {
             onAddSlide={handleTriggerFileUpload}
             onCaptureScreen={handleFloatingCaptureSession}
             onRecordVideo={handleVideoRecord}
+            onClose={() => setView(AppView.DASHBOARD)}
           />
         )}
 
         {/* Empty State (Fallback if Editor view is forced but no slides) */}
         {view === AppView.EDITOR && slides.length === 0 && (
-             <div className="flex-1 flex items-center justify-center flex-col text-slate-400">
+             <div className="flex-1 flex items-center justify-center flex-col text-slate-400 dark:text-zinc-500">
                  <p>No active session. Go to Dashboard to start.</p>
                  <button 
                     onClick={() => setView(AppView.DASHBOARD)}

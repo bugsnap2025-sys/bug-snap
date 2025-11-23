@@ -4,6 +4,7 @@ import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, Click
 import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpService';
 import { fetchSlackHistory, postSlackMessage, generateDashboardSummary } from '../services/slackService';
 import { useToast } from './ToastProvider';
+import { IntegrationModal } from './IntegrationModal';
 import { 
   ExternalLink, 
   CheckCircle2, 
@@ -18,7 +19,8 @@ import {
   ChevronUp,
   ChevronDown,
   LayoutTemplate,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCcw
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -35,7 +37,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   
   // ClickUp Lists
   const [availableLists, setAvailableLists] = useState<ClickUpHierarchyList[]>([]);
-  const [selectedListId, setSelectedListId] = useState<string>('');
+  
+  // Initialize with persisted list ID if available
+  const [selectedListId, setSelectedListId] = useState<string>(() => {
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (savedConfig) {
+          const config = JSON.parse(savedConfig);
+          return config.clickUpListId || '';
+      }
+      return '';
+  });
+  
   const [isLoadingLists, setIsLoadingLists] = useState(false);
 
   // Filters & Sort
@@ -48,6 +60,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [searchText, setSearchText] = useState('');
   const [isSharing, setIsSharing] = useState(false);
+  
+  // Integration Modal State
+  const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
 
   const { addToast } = useToast();
 
@@ -61,11 +76,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
              getAllClickUpLists(config.clickUpToken)
                  .then(lists => {
                      setAvailableLists(lists);
-                     // Default to saved list or first available
-                     if (config.clickUpListId) {
-                         setSelectedListId(config.clickUpListId);
-                     } else if (lists.length > 0) {
-                         setSelectedListId(lists[0].id);
+                     // If currently selected list is empty, default to config or first
+                     if (!selectedListId) {
+                         if (config.clickUpListId) {
+                             setSelectedListId(config.clickUpListId);
+                         } else if (lists.length > 0) {
+                             setSelectedListId(lists[0].id);
+                         }
                      }
                  })
                  .catch(err => console.error("Failed to load lists for dashboard", err))
@@ -85,8 +102,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
           if (listName) config.clickUpListName = listName;
           localStorage.setItem('bugsnap_config', JSON.stringify(config));
       }
-      // Reload data
-      loadData(false, newListId);
+      // Reload data handled by effect
+  };
+
+  const handleRefresh = () => {
+      loadData(true);
   };
 
   // --- Data Loading ---
@@ -107,7 +127,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
     try {
       if (activeSource === 'ClickUp') {
         if (!config.clickUpToken || !targetListId) {
-          setError("ClickUp is not fully configured. Select a list above.");
+          // If simply not selected yet, don't show error, just wait
+          if (!targetListId && availableLists.length > 0) {
+              // Wait for selection
+          } else if (!config.clickUpToken) {
+              setError("ClickUp is not fully configured. Please go to Integrations.");
+          }
           setIssues([]);
           return;
         }
@@ -240,21 +265,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
   const handleShareDashboardToSlack = async () => {
      setIsSharing(true);
-     addToast("Posting summary to Slack...", 'info');
      
      const savedConfig = localStorage.getItem('bugsnap_config');
      if (!savedConfig) {
-         addToast("Slack not configured.", 'error');
+         setIntegrationModalSource('Slack');
          setIsSharing(false);
          return;
      }
      const config: IntegrationConfig = JSON.parse(savedConfig);
 
      if (!config.slackToken || !config.slackChannel) {
-         addToast("Slack not configured. Please go to Integrations.", 'error');
+         setIntegrationModalSource('Slack');
          setIsSharing(false);
          return;
      }
+
+     addToast("Posting summary to Slack...", 'info');
 
      try {
          const summary = generateDashboardSummary(metrics);
@@ -279,6 +305,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
      }
   };
 
+  const handleSaveIntegration = (newConfig: IntegrationConfig) => {
+      const saved = localStorage.getItem('bugsnap_config');
+      const current = saved ? JSON.parse(saved) : {};
+      const updated = { ...current, ...newConfig };
+      localStorage.setItem('bugsnap_config', JSON.stringify(updated));
+      
+      addToast(`${integrationModalSource} connected!`, 'success');
+      setIntegrationModalSource(null);
+      
+      // If we just connected ClickUp, reload
+      if (integrationModalSource === 'ClickUp') loadData(true);
+  };
+
   // Sort Handler
   const toggleSort = (field: SortField) => {
       if (sortField === field) {
@@ -290,59 +329,79 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50">
+    <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-[#0f0f0f] transition-colors">
+      
+      <IntegrationModal 
+        isOpen={!!integrationModalSource}
+        source={integrationModalSource}
+        onClose={() => setIntegrationModalSource(null)}
+        currentConfig={(() => {
+            const saved = localStorage.getItem('bugsnap_config');
+            return saved ? JSON.parse(saved) : {};
+        })()}
+        onSave={handleSaveIntegration}
+      />
+
       <div className="p-8 max-w-7xl mx-auto w-full">
         
         {/* 1. Top Section: Quick Actions Container */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-8">
+        <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] mb-8 transition-colors">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <button onClick={onCapture} className="bg-slate-50 p-4 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/30 flex items-center gap-4 group transition-all">
-                    <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition"><LayoutTemplate size={20}/></div>
-                    <div className="text-left"><h3 className="font-bold text-slate-900">Capture Screenshots</h3><p className="text-xs text-slate-500">Capture any tab</p></div>
+                <button onClick={onCapture} className="bg-slate-50 dark:bg-[#121212] p-4 rounded-xl border border-slate-200 dark:border-[#3f3f3f] hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 flex items-center gap-4 group transition-all">
+                    <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg flex items-center justify-center group-hover:scale-110 transition"><LayoutTemplate size={20}/></div>
+                    <div className="text-left"><h3 className="font-bold text-slate-900 dark:text-white">Capture Screenshots</h3><p className="text-xs text-slate-500 dark:text-zinc-400">Capture any tab</p></div>
                 </button>
-                <button onClick={onRecord} className="bg-slate-50 p-4 rounded-xl border border-slate-200 hover:border-purple-400 hover:bg-purple-50/30 flex items-center gap-4 group transition-all">
-                    <div className="w-10 h-10 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition"><Video size={20}/></div>
-                    <div className="text-left"><h3 className="font-bold text-slate-900">Record Video</h3><p className="text-xs text-slate-500">Evidence clip</p></div>
+                <button onClick={onRecord} className="bg-slate-50 dark:bg-[#121212] p-4 rounded-xl border border-slate-200 dark:border-[#3f3f3f] hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50/30 dark:hover:bg-purple-900/10 flex items-center gap-4 group transition-all">
+                    <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-lg flex items-center justify-center group-hover:scale-110 transition"><Video size={20}/></div>
+                    <div className="text-left"><h3 className="font-bold text-slate-900 dark:text-white">Record Video</h3><p className="text-xs text-slate-500 dark:text-zinc-400">Evidence clip</p></div>
                 </button>
-                <button onClick={onUpload} className="bg-slate-50 p-4 rounded-xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/30 flex items-center gap-4 group transition-all">
-                    <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition"><Upload size={20}/></div>
-                    <div className="text-left"><h3 className="font-bold text-slate-900">Upload File</h3><p className="text-xs text-slate-500">Drag & Drop</p></div>
+                <button onClick={onUpload} className="bg-slate-50 dark:bg-[#121212] p-4 rounded-xl border border-slate-200 dark:border-[#3f3f3f] hover:border-emerald-400 dark:hover:border-emerald-500 hover:bg-emerald-50/30 dark:hover:bg-emerald-900/10 flex items-center gap-4 group transition-all">
+                    <div className="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-lg flex items-center justify-center group-hover:scale-110 transition"><Upload size={20}/></div>
+                    <div className="text-left"><h3 className="font-bold text-slate-900 dark:text-white">Upload File</h3><p className="text-xs text-slate-500 dark:text-zinc-400">Drag & Drop</p></div>
                 </button>
             </div>
         </div>
 
         {/* 2. Visual Separator */}
-        <hr className="border-slate-200 mb-8" />
+        <hr className="border-slate-200 dark:border-[#272727] mb-8 transition-colors" />
 
         {/* 3. Header Row: Title & Right Controls */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
-                <h1 className="text-3xl font-bold text-slate-900">Bug Dashboard</h1>
-                <p className="text-slate-500">Track testing progress and project health.</p>
+                <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Bug Dashboard</h1>
+                <p className="text-slate-500 dark:text-zinc-400">Track testing progress and project health.</p>
             </div>
             
             <div className="flex items-center gap-3">
                 {/* List Selector (Context Switcher) */}
                 {activeSource === 'ClickUp' && (
-                    <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                        <div className="bg-[#7B68EE]/10 p-1.5 rounded-lg text-[#7B68EE]">
+                    <div className="flex items-center gap-2 bg-white dark:bg-[#1e1e1e] p-2 rounded-xl border border-slate-200 dark:border-[#272727] shadow-sm transition-colors">
+                        <div className="bg-[#7B68EE]/10 dark:bg-[#7B68EE]/20 p-1.5 rounded-lg text-[#7B68EE] dark:text-[#9d8ef0]">
                             <Layers size={18} />
                         </div>
-                        <span className="text-xs font-bold text-slate-400 uppercase px-2 hidden sm:inline">List:</span>
+                        <span className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase px-2 hidden sm:inline">List:</span>
                         <div className="relative min-w-[150px] sm:min-w-[200px]">
                             <select 
                                 value={selectedListId} 
                                 onChange={(e) => handleListChange(e.target.value)}
-                                className="w-full appearance-none bg-slate-50 border-none rounded-lg py-1.5 pl-3 pr-8 text-sm font-bold text-slate-700 focus:ring-0 cursor-pointer hover:bg-slate-100 transition"
+                                className="w-full appearance-none bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-1.5 pl-3 pr-8 text-sm font-bold text-slate-700 dark:text-zinc-200 focus:ring-2 focus:ring-[#7B68EE] focus:border-transparent outline-none cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] transition"
                                 disabled={isLoadingLists}
                             >
                                 {availableLists.map(l => (
                                     <option key={l.id} value={l.id}>{l.groupName} &gt; {l.name}</option>
                                 ))}
-                                {availableLists.length === 0 && <option>No lists found</option>}
+                                {availableLists.length === 0 && <option value="">{isLoadingLists ? 'Loading lists...' : 'No lists found'}</option>}
                             </select>
                             <ChevronDown size={14} className="absolute right-3 top-2.5 text-slate-400 pointer-events-none"/>
                         </div>
+                        <button 
+                            onClick={handleRefresh} 
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-[#7B68EE] hover:bg-[#7B68EE]/5 dark:hover:bg-[#7B68EE]/10 transition"
+                            title="Refresh Data"
+                            disabled={isLoading}
+                        >
+                            <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
+                        </button>
                     </div>
                 )}
 
@@ -366,105 +425,114 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         </div>
 
         {/* 5. Filters (Filters positioned above bug table) */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2 text-slate-500 mr-2">
+        <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-200 dark:border-[#272727] mb-6 flex flex-wrap items-center gap-4 transition-colors">
+            <div className="flex items-center gap-2 text-slate-500 dark:text-zinc-400 mr-2">
                 <Filter size={16} /> <span className="text-sm font-bold">Filters</span>
             </div>
             
             <div className="relative">
-                <Search size={14} className="absolute left-3 top-2.5 text-slate-400"/>
+                <Search size={14} className="absolute left-3 top-3 text-slate-400"/>
                 <input 
                     type="text" 
                     placeholder="Search bugs..." 
-                    className="pl-9 pr-3 py-1.5 bg-slate-50 border-none rounded-lg text-sm focus:ring-1 focus:ring-blue-500 w-40"
+                    className="pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none w-40 text-slate-900 dark:text-zinc-100 placeholder-slate-400 transition-colors"
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
                 />
             </div>
 
-            <div className="h-6 w-px bg-slate-200 mx-2 hidden md:block"></div>
+            <div className="h-6 w-px bg-slate-200 dark:bg-[#272727] mx-2 hidden md:block"></div>
 
             {/* Date Range Filter */}
-            <select 
-                className="bg-slate-50 border-none rounded-lg py-1.5 px-3 text-sm text-slate-600 cursor-pointer hover:bg-slate-100"
-                value={filters.dateRange}
-                onChange={(e) => setFilters(prev => ({ ...prev, dateRange: e.target.value as any }))}
-            >
-                <option value="all">All Time</option>
-                <option value="24h">Last 24 Hours</option>
-                <option value="7d">Last 7 Days</option>
-                <option value="30d">Last 30 Days</option>
-            </select>
+            <div className="relative">
+                <select 
+                    className="bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-2.5 pl-3 pr-8 text-sm text-slate-600 dark:text-zinc-300 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] focus:ring-2 focus:ring-blue-500 outline-none appearance-none transition-colors"
+                    value={filters.dateRange}
+                    onChange={(e) => setFilters(prev => ({ ...prev, dateRange: e.target.value as any }))}
+                >
+                    <option value="all">All Time</option>
+                    <option value="24h">Last 24 Hours</option>
+                    <option value="7d">Last 7 Days</option>
+                    <option value="30d">Last 30 Days</option>
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-3 text-slate-400 pointer-events-none"/>
+            </div>
 
             {/* Priority Filter */}
-            <select
-                className="bg-slate-50 border-none rounded-lg py-1.5 px-3 text-sm text-slate-600 cursor-pointer hover:bg-slate-100"
-                value={filters.priority && filters.priority.length > 0 ? filters.priority[0] : ''}
-                onChange={(e) => {
-                    const val = e.target.value;
-                    setFilters(prev => ({ ...prev, priority: val ? [val] : [] }));
-                }}
-            >
-                <option value="">All Priorities</option>
-                <option value="Urgent">Urgent</option>
-                <option value="High">High</option>
-                <option value="Normal">Normal</option>
-                <option value="Low">Low</option>
-            </select>
+            <div className="relative">
+                <select
+                    className="bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-2.5 pl-3 pr-8 text-sm text-slate-600 dark:text-zinc-300 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] focus:ring-2 focus:ring-blue-500 outline-none appearance-none transition-colors"
+                    value={filters.priority && filters.priority.length > 0 ? filters.priority[0] : ''}
+                    onChange={(e) => {
+                        const val = e.target.value;
+                        setFilters(prev => ({ ...prev, priority: val ? [val] : [] }));
+                    }}
+                >
+                    <option value="">All Priorities</option>
+                    <option value="Urgent">Urgent</option>
+                    <option value="High">High</option>
+                    <option value="Normal">Normal</option>
+                    <option value="Low">Low</option>
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-3 text-slate-400 pointer-events-none"/>
+            </div>
 
             {/* Assignee Filter */}
-            <select
-                className="bg-slate-50 border-none rounded-lg py-1.5 px-3 text-sm text-slate-600 cursor-pointer hover:bg-slate-100"
-                value={filters.assignee || ''}
-                onChange={(e) => setFilters(prev => ({ ...prev, assignee: e.target.value }))}
-            >
-                <option value="">All Assignees</option>
-                {uniqueAssignees.map(user => (
-                    <option key={user} value={user}>{user}</option>
-                ))}
-            </select>
+            <div className="relative">
+                <select
+                    className="bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-2.5 pl-3 pr-8 text-sm text-slate-600 dark:text-zinc-300 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] focus:ring-2 focus:ring-blue-500 outline-none appearance-none transition-colors"
+                    value={filters.assignee || ''}
+                    onChange={(e) => setFilters(prev => ({ ...prev, assignee: e.target.value }))}
+                >
+                    <option value="">All Assignees</option>
+                    {uniqueAssignees.map(user => (
+                        <option key={user} value={user}>{user}</option>
+                    ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-3 text-slate-400 pointer-events-none"/>
+            </div>
         </div>
 
         {/* Error State */}
         {error && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-8 flex items-start gap-3 text-red-800">
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 mb-8 flex items-start gap-3 text-red-800 dark:text-red-300">
                 <AlertTriangle className="shrink-0 mt-0.5" />
                 <div><h3 className="font-bold">Connection Issue</h3><p className="text-sm mt-1">{error}</p></div>
             </div>
         )}
 
         {/* 6. Bug Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-sm border border-slate-200 dark:border-[#272727] overflow-hidden transition-colors">
              <div className="overflow-x-auto">
                  <table className="w-full text-left text-sm">
-                     <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-xs border-b border-slate-200">
+                     <thead className="bg-slate-50 dark:bg-[#272727] text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-xs border-b border-slate-200 dark:border-[#272727]">
                          <tr>
-                             <th className="px-6 py-4 font-bold cursor-pointer hover:text-slate-700" onClick={() => toggleSort('date')}>
+                             <th className="px-6 py-4 font-bold cursor-pointer hover:text-slate-700 dark:hover:text-zinc-300" onClick={() => toggleSort('date')}>
                                  <div className="flex items-center gap-1">Date {sortField === 'date' && (sortOrder === 'asc' ? <ChevronUp size={14}/> : <ChevronDown size={14}/>)}</div>
                              </th>
-                             <th className="px-6 py-4 font-bold">Bug Title</th>
-                             <th className="px-6 py-4 font-bold cursor-pointer hover:text-slate-700" onClick={() => toggleSort('priority')}>
+                             <th className="px-6 py-4 font-bold dark:text-zinc-300">Bug Title</th>
+                             <th className="px-6 py-4 font-bold cursor-pointer hover:text-slate-700 dark:hover:text-zinc-300" onClick={() => toggleSort('priority')}>
                                  <div className="flex items-center gap-1">Priority {sortField === 'priority' && (sortOrder === 'asc' ? <ChevronUp size={14}/> : <ChevronDown size={14}/>)}</div>
                              </th>
-                             <th className="px-6 py-4 font-bold cursor-pointer hover:text-slate-700" onClick={() => toggleSort('status')}>
+                             <th className="px-6 py-4 font-bold cursor-pointer hover:text-slate-700 dark:hover:text-zinc-300" onClick={() => toggleSort('status')}>
                                  <div className="flex items-center gap-1">Status {sortField === 'status' && (sortOrder === 'asc' ? <ChevronUp size={14}/> : <ChevronDown size={14}/>)}</div>
                              </th>
-                             <th className="px-6 py-4 font-bold">Assignee</th>
-                             <th className="px-6 py-4 font-bold w-20">Action</th>
+                             <th className="px-6 py-4 font-bold dark:text-zinc-300">Assignee</th>
+                             <th className="px-6 py-4 font-bold w-20 dark:text-zinc-300">Action</th>
                          </tr>
                      </thead>
-                     <tbody className="divide-y divide-slate-100">
+                     <tbody className="divide-y divide-slate-100 dark:divide-[#272727]">
                          {processedData.length === 0 ? (
-                             <tr><td colSpan={6} className="px-6 py-12 text-center text-slate-400">No bugs found matching your filters.</td></tr>
+                             <tr><td colSpan={6} className="px-6 py-12 text-center text-slate-400 dark:text-zinc-500">No bugs found matching your filters.</td></tr>
                          ) : (
                              processedData.map(issue => (
-                                 <tr key={issue.id} className="hover:bg-slate-50 transition group">
-                                     <td className="px-6 py-4 text-slate-500 whitespace-nowrap">{issue.date}</td>
+                                 <tr key={issue.id} className="hover:bg-slate-50 dark:hover:bg-[#272727] transition group">
+                                     <td className="px-6 py-4 text-slate-500 dark:text-zinc-400 whitespace-nowrap">{issue.date}</td>
                                      <td className="px-6 py-4">
-                                         <div className="font-bold text-slate-800 line-clamp-1">{issue.title}</div>
+                                         <div className="font-bold text-slate-800 dark:text-zinc-200 line-clamp-1">{issue.title}</div>
                                          <div className="flex items-center gap-2 mt-1">
                                              <span className="text-xs text-slate-400 font-mono">#{issue.id}</span>
-                                             {issue.module && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 rounded">{issue.module}</span>}
+                                             {issue.module && <span className="text-[10px] bg-slate-100 dark:bg-[#272727] text-slate-500 dark:text-zinc-300 px-1.5 rounded">{issue.module}</span>}
                                          </div>
                                      </td>
                                      <td className="px-6 py-4">{getPriorityBadge(issue.priority)}</td>
@@ -475,15 +543,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                                      </td>
                                      <td className="px-6 py-4">
                                          {issue.assignee ? (
-                                             <div className="flex items-center gap-2 text-slate-600">
-                                                 <div className="w-6 h-6 bg-slate-200 rounded-full flex items-center justify-center text-xs font-bold">{issue.assignee.charAt(0).toUpperCase()}</div>
+                                             <div className="flex items-center gap-2 text-slate-600 dark:text-zinc-300">
+                                                 <div className="w-6 h-6 bg-slate-200 dark:bg-[#3f3f3f] rounded-full flex items-center justify-center text-xs font-bold">{issue.assignee.charAt(0).toUpperCase()}</div>
                                                  <span className="truncate max-w-[100px]">{issue.assignee}</span>
                                              </div>
                                          ) : <span className="text-slate-400 text-xs italic">Unassigned</span>}
                                      </td>
                                      <td className="px-6 py-4">
                                          {issue.url && (
-                                             <a href={issue.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-full inline-block transition">
+                                             <a href={issue.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full inline-block transition">
                                                  <ExternalLink size={16} />
                                              </a>
                                          )}
@@ -495,7 +563,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                  </table>
              </div>
              {/* Pagination (Simple) */}
-             <div className="p-4 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 text-center">
+             <div className="p-4 border-t border-slate-200 dark:border-[#272727] bg-slate-50 dark:bg-[#0f0f0f] text-xs text-slate-500 dark:text-zinc-400 text-center transition-colors">
                  Showing {processedData.length} of {issues.length} records
              </div>
         </div>
@@ -508,21 +576,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 // Helper Component for KPI Cards
 const KPICard = ({ label, value, color, icon }: any) => {
     const colorClasses: Record<string, string> = {
-        blue: "bg-blue-50 text-blue-600",
-        orange: "bg-orange-50 text-orange-600",
-        red: "bg-red-50 text-red-600",
-        green: "bg-green-50 text-green-600",
-        purple: "bg-purple-50 text-purple-600",
-        indigo: "bg-indigo-50 text-indigo-600"
+        blue: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400",
+        orange: "bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400",
+        red: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400",
+        green: "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400",
+        purple: "bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400",
+        indigo: "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400"
     };
 
     return (
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between h-28">
+        <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-200 dark:border-[#272727] flex flex-col justify-between h-28 transition-colors">
             <div className="flex justify-between items-start">
-                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</span>
+                 <span className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wide">{label}</span>
                  <div className={`p-1.5 rounded-lg ${colorClasses[color]}`}>{icon}</div>
             </div>
-            <span className="text-3xl font-bold text-slate-900">{value}</span>
+            <span className="text-3xl font-bold text-slate-900 dark:text-white">{value}</span>
         </div>
     )
 }
@@ -530,10 +598,10 @@ const KPICard = ({ label, value, color, icon }: any) => {
 // Helper Priority Badge
 const getPriorityBadge = (priority: ReportedIssue['priority']) => {
     switch (priority) {
-      case 'Urgent': return <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded text-xs font-bold border border-red-100 flex w-fit items-center gap-1"><AlertCircle size={10}/> Urgent</span>;
-      case 'High': return <span className="text-orange-700 bg-orange-50 px-2 py-0.5 rounded text-xs font-medium border border-orange-100 w-fit block">High</span>;
-      case 'Normal': return <span className="text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-xs font-medium border border-blue-100 w-fit block">Normal</span>;
-      case 'Low': return <span className="text-slate-500 bg-slate-100 px-2 py-0.5 rounded text-xs font-medium border border-slate-200 w-fit block">Low</span>;
+      case 'Urgent': return <span className="text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded text-xs font-bold border border-red-100 dark:border-red-800 flex w-fit items-center gap-1"><AlertCircle size={10}/> Urgent</span>;
+      case 'High': return <span className="text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded text-xs font-medium border border-orange-100 dark:border-orange-800 w-fit block">High</span>;
+      case 'Normal': return <span className="text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded text-xs font-medium border border-blue-100 dark:border-blue-800 w-fit block">Normal</span>;
+      case 'Low': return <span className="text-slate-500 dark:text-zinc-400 bg-slate-100 dark:bg-[#272727] px-2 py-0.5 rounded text-xs font-medium border border-slate-200 dark:border-[#3f3f3f] w-fit block">Low</span>;
       default: return <span className="text-slate-400 px-2 text-xs">-</span>;
     }
 };

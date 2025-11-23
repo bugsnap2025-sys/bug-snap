@@ -52,24 +52,24 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               pointer-events-auto flex items-start gap-3 min-w-[300px] max-w-md p-4 rounded-xl shadow-lg border transition-all animate-in slide-in-from-bottom-5 duration-300
               ${
                 toast.type === 'success' 
-                  ? 'bg-white border-green-200 text-green-800 shadow-green-50/50' 
+                  ? 'bg-white dark:bg-[#1e1e1e] border-green-200 dark:border-green-900/30 text-green-800 dark:text-green-400 shadow-green-50/50 dark:shadow-none' 
                   : toast.type === 'error'
-                  ? 'bg-white border-red-200 text-red-800 shadow-red-50/50'
-                  : 'bg-white border-blue-200 text-slate-800 shadow-blue-50/50'
+                  ? 'bg-white dark:bg-[#1e1e1e] border-red-200 dark:border-red-900/30 text-red-800 dark:text-red-400 shadow-red-50/50 dark:shadow-none'
+                  : 'bg-white dark:bg-[#1e1e1e] border-blue-200 dark:border-blue-900/30 text-slate-800 dark:text-zinc-200 shadow-blue-50/50 dark:shadow-none'
               }
             `}
           >
             <div className="shrink-0 mt-0.5">
-              {toast.type === 'success' && <CheckCircle2 size={18} className="text-green-600" />}
-              {toast.type === 'error' && <AlertCircle size={18} className="text-red-600" />}
-              {toast.type === 'info' && <Info size={18} className="text-blue-600" />}
+              {toast.type === 'success' && <CheckCircle2 size={18} className="text-green-600 dark:text-green-500" />}
+              {toast.type === 'error' && <AlertCircle size={18} className="text-red-600 dark:text-red-500" />}
+              {toast.type === 'info' && <Info size={18} className="text-blue-600 dark:text-blue-500" />}
             </div>
-            <div className="flex-1 text-sm font-medium leading-tight">
+            <div className="flex-1 text-sm font-medium leading-tight break-words">
               {toast.message}
             </div>
             <button 
               onClick={() => removeToast(toast.id)}
-              className="shrink-0 text-slate-400 hover:text-slate-600 transition-colors"
+              className="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300 transition-colors"
             >
               <X size={16} />
             </button>

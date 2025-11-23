@@ -1,11 +1,12 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig } from '../types';
+import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource } from '../types';
 import { refineBugReport } from '../services/geminiService';
 import { createClickUpTask, uploadClickUpAttachment, generateTaskDescription, generateMasterDescription } from '../services/clickUpService';
 import { postSlackMessage, uploadSlackFile, generateSlideMessage } from '../services/slackService';
 import { ClickUpModal } from './ClickUpModal';
 import { SlackModal } from './SlackModal';
+import { IntegrationModal } from './IntegrationModal';
 import { useToast } from './ToastProvider';
 import { jsPDF } from "jspdf";
 import { 
@@ -15,7 +16,6 @@ import {
   Wand2, 
   Trash2, 
   FileText, 
-  Copy,
   Play,
   Pause,
   ChevronLeft,
@@ -23,13 +23,15 @@ import {
   Undo2,
   Plus,
   Layers,
-  CreditCard,
-  Slack,
   ClipboardCopy,
-  Download,
   Camera,
   Video,
-  Upload
+  Upload,
+  X,
+  Move,
+  AlertTriangle,
+  Check,
+  ExternalLink
 } from 'lucide-react';
 
 interface EditorProps {
@@ -41,6 +43,7 @@ interface EditorProps {
   onAddSlide: () => void; // This triggers file upload
   onCaptureScreen: () => void;
   onRecordVideo: () => void;
+  onClose: () => void;
 }
 
 export const Editor: React.FC<EditorProps> = ({ 
@@ -51,11 +54,13 @@ export const Editor: React.FC<EditorProps> = ({
   onDeleteSlide,
   onAddSlide,
   onCaptureScreen,
-  onRecordVideo
+  onRecordVideo,
+  onClose
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
+  const commentRefs = useRef<{ [key: number]: HTMLTextAreaElement | null }>({});
   const { addToast } = useToast();
   
   // Derived state
@@ -74,14 +79,21 @@ export const Editor: React.FC<EditorProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   
-  // Resize Handle State
+  // Interaction State
   const [resizeHandle, setResizeHandle] = useState<string | null>(null);
+  const [isDraggingShape, setIsDraggingShape] = useState(false);
+  const [dragOffset, setDragOffset] = useState<Point | null>(null);
   
   // Modal State
   const [isClickUpModalOpen, setIsClickUpModalOpen] = useState(false);
   const [isSlackModalOpen, setIsSlackModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [createdTaskUrl, setCreatedTaskUrl] = useState<string | null>(null);
+  
+  // Integration Modal State
+  const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
 
   // Update local annotations when active slide changes
   useEffect(() => {
@@ -96,16 +108,31 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }, [activeSlideId, slides]);
 
-  // Close add menu on click outside
+  // Auto-focus new annotation comment
+  useEffect(() => {
+     if (annotations.length > 0) {
+         const lastId = annotations[annotations.length - 1].id;
+         // Only focus if it's the one we just selected (created)
+         if (selectedAnnotationId === lastId && commentRefs.current[lastId]) {
+             commentRefs.current[lastId]?.focus();
+         }
+     }
+  }, [annotations.length]);
+
+  // Click outside listener for Add Menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
+      if (isAddMenuOpen && addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
         setIsAddMenuOpen(false);
       }
     };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAddMenuOpen]);
+
 
   // --- Canvas Logic ---
   const getCanvasPoint = (e: React.MouseEvent): Point => {
@@ -117,7 +144,6 @@ export const Editor: React.FC<EditorProps> = ({
     };
   };
 
-  // Helper to check if point is near a corner (for resize)
   const getResizeHandle = (point: Point, ann: Annotation): string | null => {
       const handleSize = 10;
       const minX = Math.min(ann.start.x, ann.end.x);
@@ -133,10 +159,19 @@ export const Editor: React.FC<EditorProps> = ({
       return null;
   };
 
+  const isPointInAnnotation = (point: Point, ann: Annotation): boolean => {
+      const minX = Math.min(ann.start.x, ann.end.x);
+      const minY = Math.min(ann.start.y, ann.end.y);
+      const maxX = Math.max(ann.start.x, ann.end.x);
+      const maxY = Math.max(ann.start.y, ann.end.y);
+      
+      return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     const point = getCanvasPoint(e);
 
-    // Check for resize handle click first
+    // 1. Check Resize Handle
     if (selectedAnnotationId) {
         const ann = annotations.find(a => a.id === selectedAnnotationId);
         if (ann) {
@@ -149,8 +184,34 @@ export const Editor: React.FC<EditorProps> = ({
         }
     }
 
-    if (selectedTool === ToolType.SELECT) return;
+    // 2. Check for Dragging Existing Annotation
+    if (selectedTool === ToolType.SELECT) {
+        // Check if we clicked on the selected annotation first
+        const selectedAnn = annotations.find(a => a.id === selectedAnnotationId);
+        if (selectedAnn && isPointInAnnotation(point, selectedAnn)) {
+            setIsDraggingShape(true);
+            setDragOffset({ x: point.x - selectedAnn.start.x, y: point.y - selectedAnn.start.y }); // Offset from start point
+            // For simplicity, tracking offset from start point. 
+            // Better: track mouse delta.
+            setStartPoint(point); // Use this to calc delta
+            return;
+        }
+
+        // Check if clicked on any other annotation
+        const clickedAnn = annotations.find(a => isPointInAnnotation(point, a));
+        if (clickedAnn) {
+            setSelectedAnnotationId(clickedAnn.id);
+            setIsDraggingShape(true);
+            setStartPoint(point);
+            return;
+        }
+        
+        // If clicked on empty space, deselect
+        setSelectedAnnotationId(null);
+        return;
+    }
     
+    // 3. Start Drawing New Shape
     setStartPoint(point);
     setCurrentPoint(point);
     setIsDrawing(true);
@@ -159,8 +220,28 @@ export const Editor: React.FC<EditorProps> = ({
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDrawing) return;
     const point = getCanvasPoint(e);
+    
+    if (isDraggingShape && selectedAnnotationId && startPoint) {
+        // Move logic
+        const dx = point.x - startPoint.x;
+        const dy = point.y - startPoint.y;
+        
+        setAnnotations(prev => prev.map(ann => {
+            if (ann.id === selectedAnnotationId) {
+                return {
+                    ...ann,
+                    start: { x: ann.start.x + dx, y: ann.start.y + dy },
+                    end: { x: ann.end.x + dx, y: ann.end.y + dy }
+                };
+            }
+            return ann;
+        }));
+        setStartPoint(point); // Reset start to current for next delta
+        return;
+    }
+
+    if (!isDrawing) return;
     
     if (resizeHandle && selectedAnnotationId) {
         const updatedAnnotations = annotations.map(ann => {
@@ -182,6 +263,13 @@ export const Editor: React.FC<EditorProps> = ({
   };
 
   const handleMouseUp = () => {
+    if (isDraggingShape) {
+        onUpdateSlide({ ...activeSlide, annotations });
+        setIsDraggingShape(false);
+        setStartPoint(null);
+        return;
+    }
+
     if (!isDrawing) return;
     
     if (resizeHandle && selectedAnnotationId) {
@@ -256,6 +344,16 @@ export const Editor: React.FC<EditorProps> = ({
   const handlePrevSlide = () => {
     const idx = slides.findIndex(s => s.id === activeSlideId);
     if (idx > 0) onSelectSlide(slides[idx - 1].id);
+  };
+
+  const handleSaveIntegration = (newConfig: IntegrationConfig) => {
+      const saved = localStorage.getItem('bugsnap_config');
+      const current = saved ? JSON.parse(saved) : {};
+      const updated = { ...current, ...newConfig };
+      localStorage.setItem('bugsnap_config', JSON.stringify(updated));
+      
+      addToast(`${integrationModalSource} connected!`, 'success');
+      setIntegrationModalSource(null);
   };
 
   // --- Export Logic ---
@@ -536,6 +634,8 @@ export const Editor: React.FC<EditorProps> = ({
 
     setIsExporting(true);
     try {
+        let taskUrl = "";
+
         if (mode === 'current') {
             const task = await createClickUpTask({
                 listId: listId,
@@ -543,6 +643,7 @@ export const Editor: React.FC<EditorProps> = ({
                 title: customTitle || activeSlide.name || 'Bug Report',
                 description: customDescription || generateTaskDescription(activeSlide)
             });
+            taskUrl = task.url;
             
             const blob = await generateCompositeImage(activeSlide);
             await uploadClickUpAttachment(task.id, config.clickUpToken, blob, 'report.png');
@@ -554,6 +655,7 @@ export const Editor: React.FC<EditorProps> = ({
                 title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
                 description: customDescription || generateMasterDescription(slides)
             });
+            taskUrl = masterTask.url;
 
             for (const slide of slides) {
                 const blob = await generateCompositeImage(slide);
@@ -567,6 +669,7 @@ export const Editor: React.FC<EditorProps> = ({
                 title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
                 description: customDescription || generateMasterDescription(slides)
             });
+            taskUrl = masterTask.url;
 
             for (const slide of slides) {
                 const subTask = await createClickUpTask({
@@ -583,7 +686,7 @@ export const Editor: React.FC<EditorProps> = ({
         }
 
         setIsClickUpModalOpen(false);
-        addToast("Exported to ClickUp Successfully!", 'success');
+        setCreatedTaskUrl(taskUrl);
 
     } catch (error) {
         console.error(error);
@@ -597,7 +700,6 @@ export const Editor: React.FC<EditorProps> = ({
     }
   };
 
-  // Slack Export remains the same for now
   const handleExportToSlack = async (mode: SlackExportMode) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
@@ -674,8 +776,89 @@ export const Editor: React.FC<EditorProps> = ({
 
   const activeIndex = slides.findIndex(s => s.id === activeSlideId);
 
+  // --- Close Confirmation Dialog ---
+  const CloseConfirmation = () => {
+      if (!showCloseConfirm) return null;
+      return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] backdrop-blur-sm p-4">
+              <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl p-6 max-w-sm w-full border border-slate-200 dark:border-[#272727]">
+                  <div className="flex flex-col items-center text-center gap-3">
+                      <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center">
+                          <AlertTriangle size={24} />
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-white">Close Session?</h3>
+                      <p className="text-sm text-slate-500 dark:text-zinc-400 mb-2">
+                          Are you sure you want to leave the editor? Unsaved progress might be lost.
+                      </p>
+                      <div className="flex gap-3 w-full mt-2">
+                          <button 
+                              onClick={() => setShowCloseConfirm(false)}
+                              className="flex-1 py-2 rounded-lg font-medium text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#272727] transition"
+                          >
+                              Cancel
+                          </button>
+                          <button 
+                              onClick={() => { setShowCloseConfirm(false); onClose(); }}
+                              className="flex-1 py-2 rounded-lg font-bold text-white bg-red-600 hover:bg-red-700 transition"
+                          >
+                              Close Session
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )
+  }
+
+  // --- Success Modal ---
+  const SuccessModal = () => {
+      if (!createdTaskUrl) return null;
+      return (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-slate-200 dark:border-[#272727] flex flex-col items-center text-center transition-colors">
+                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mb-4 shadow-sm">
+                      <Check size={32} strokeWidth={3} />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Task Created!</h2>
+                  <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 leading-relaxed">
+                      Successfully exported to ClickUp.
+                  </p>
+                  <a 
+                      href={createdTaskUrl} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="w-full py-3 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 mb-3 transform active:scale-95"
+                      onClick={() => setCreatedTaskUrl(null)}
+                  >
+                      Open in ClickUp <ExternalLink size={18} />
+                  </a>
+                  <button 
+                      onClick={() => setCreatedTaskUrl(null)}
+                      className="text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300 text-sm font-medium py-2 px-4 rounded-lg hover:bg-slate-50 dark:hover:bg-[#272727] transition"
+                  >
+                      Close
+                  </button>
+              </div>
+          </div>
+      )
+  }
+
   return (
-    <div className="flex flex-col h-full bg-white relative">
+    <div className="flex flex-col h-full bg-white dark:bg-[#0f0f0f] relative transition-colors">
+      <CloseConfirmation />
+      <SuccessModal />
+      
+      <IntegrationModal 
+        isOpen={!!integrationModalSource}
+        source={integrationModalSource}
+        onClose={() => setIntegrationModalSource(null)}
+        currentConfig={(() => {
+            const saved = localStorage.getItem('bugsnap_config');
+            return saved ? JSON.parse(saved) : {};
+        })()}
+        onSave={handleSaveIntegration}
+      />
+
       <ClickUpModal 
         isOpen={isClickUpModalOpen} 
         onClose={() => {
@@ -687,6 +870,7 @@ export const Editor: React.FC<EditorProps> = ({
         slides={slides}
         activeSlideId={activeSlideId}
         error={exportError}
+        onConfigure={() => { setIsClickUpModalOpen(false); setIntegrationModalSource('ClickUp'); }}
       />
       
       <SlackModal 
@@ -699,31 +883,41 @@ export const Editor: React.FC<EditorProps> = ({
         loading={isExporting}
         slides={slides}
         error={exportError}
+        onConfigure={() => { setIsSlackModalOpen(false); setIntegrationModalSource('Slack'); }}
       />
 
       {/* Toolbar */}
-      <div className="h-14 border-b border-slate-200 flex items-center justify-between px-4 bg-white shrink-0 z-20">
+      <div className="h-14 border-b border-slate-200 dark:border-[#272727] flex items-center justify-between px-4 bg-white dark:bg-[#0f0f0f] shrink-0 z-20 transition-colors">
         <div className="flex items-center h-full">
+           <button 
+             onClick={() => setShowCloseConfirm(true)}
+             className="mr-3 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-lg transition"
+             title="Close Session"
+           >
+             <X size={20} />
+           </button>
+           <div className="w-px h-6 bg-slate-200 dark:bg-[#272727] mr-3"></div>
+
           {/* Shapes */}
-          <div className="flex items-center gap-2 pr-4 border-r border-slate-200 h-8">
+          <div className="flex items-center gap-2 pr-4 border-r border-slate-200 dark:border-[#272727] h-8">
             <button 
               onClick={() => setSelectedTool(ToolType.SELECT)}
-              className={`p-1.5 rounded transition-all ${selectedTool === ToolType.SELECT ? 'bg-blue-100 text-blue-600 ring-1 ring-blue-300' : 'text-slate-500 hover:bg-slate-100'}`}
+              className={`p-1.5 rounded transition-all ${selectedTool === ToolType.SELECT ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-700' : 'text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#272727]'}`}
               title="Select / Edit"
             >
               <MousePointer2 size={20} />
             </button>
-            <div className="w-px h-4 bg-slate-200 mx-1"></div>
+            <div className="w-px h-4 bg-slate-200 dark:bg-[#272727] mx-1"></div>
             <button 
               onClick={() => setSelectedTool(ToolType.RECTANGLE)}
-              className={`p-1.5 rounded transition-all ${selectedTool === ToolType.RECTANGLE ? 'bg-blue-100 text-blue-600 ring-1 ring-blue-300' : 'text-slate-500 hover:bg-slate-100'}`}
+              className={`p-1.5 rounded transition-all ${selectedTool === ToolType.RECTANGLE ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-700 cursor-crosshair' : 'text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#272727]'}`}
               title="Rectangle"
             >
               <Square size={20} />
             </button>
             <button 
               onClick={() => setSelectedTool(ToolType.CIRCLE)}
-              className={`p-1.5 rounded transition-all ${selectedTool === ToolType.CIRCLE ? 'bg-blue-100 text-blue-600 ring-1 ring-blue-300' : 'text-slate-500 hover:bg-slate-100'}`}
+              className={`p-1.5 rounded transition-all ${selectedTool === ToolType.CIRCLE ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-700 cursor-crosshair' : 'text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#272727]'}`}
               title="Circle"
             >
               <CircleIcon size={20} />
@@ -731,45 +925,31 @@ export const Editor: React.FC<EditorProps> = ({
           </div>
 
           {/* Edit Actions */}
-          <div className="flex items-center gap-2 px-4 border-r border-slate-200 h-8">
-            <button onClick={handleUndo} className="text-slate-500 hover:text-slate-800 hover:bg-slate-100 p-1.5 rounded" title="Undo (Last Annotation)">
+          <div className="flex items-center gap-2 px-4 border-r border-slate-200 dark:border-[#272727] h-8">
+            <button onClick={handleUndo} className="text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#272727] p-1.5 rounded" title="Undo (Last Annotation)">
               <Undo2 size={20} />
             </button>
-            <button 
-               onClick={handleDeleteSelected} 
-               disabled={!selectedAnnotationId}
-               className={`p-1.5 rounded transition-colors ${selectedAnnotationId ? 'text-slate-500 hover:text-red-600 hover:bg-red-50' : 'text-slate-300 cursor-not-allowed'}`}
-               title="Delete Selected Annotation"
-            >
-              <Trash2 size={20} />
-            </button>
+            {selectedAnnotationId && (
+                <button 
+                onClick={handleDeleteSelected} 
+                className="p-1.5 rounded transition-colors text-slate-500 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+                title="Delete Selected Annotation"
+                >
+                <Trash2 size={20} />
+                </button>
+            )}
           </div>
 
           {/* Pagination */}
           <div className="flex items-center gap-3 px-4 h-8">
-            <button onClick={handlePrevSlide} disabled={activeIndex <= 0} className="text-slate-500 disabled:text-slate-300 hover:text-slate-800">
+            <button onClick={handlePrevSlide} disabled={activeIndex <= 0} className="text-slate-500 dark:text-zinc-400 disabled:text-slate-300 dark:disabled:text-zinc-700 hover:text-slate-800 dark:hover:text-white">
               <ChevronLeft size={20} />
             </button>
-            <span className="text-sm font-medium text-slate-600 tabular-nums select-none">
+            <span className="text-sm font-medium text-slate-600 dark:text-zinc-300 tabular-nums select-none">
               {activeIndex + 1} / {slides.length}
             </span>
-            <button onClick={handleNextSlide} disabled={activeIndex >= slides.length - 1} className="text-slate-500 disabled:text-slate-300 hover:text-slate-800">
+            <button onClick={handleNextSlide} disabled={activeIndex >= slides.length - 1} className="text-slate-500 dark:text-zinc-400 disabled:text-slate-300 dark:disabled:text-zinc-700 hover:text-slate-800 dark:hover:text-white">
               <ChevronRight size={20} />
-            </button>
-          </div>
-          
-          <div className="flex items-center gap-2 px-4 h-8 border-l border-slate-200 ml-4">
-            <button 
-                onClick={() => setIsClickUpModalOpen(true)}
-                className="flex items-center gap-1.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-            >
-               <Layers size={14} /> ClickUp
-            </button>
-            <button 
-                onClick={() => setIsSlackModalOpen(true)}
-                className="flex items-center gap-1.5 bg-[#4A154B] hover:bg-[#3f1240] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-            >
-               <Slack size={14} /> Slack
             </button>
           </div>
         </div>
@@ -778,7 +958,7 @@ export const Editor: React.FC<EditorProps> = ({
            <button 
              onClick={handleGeneratePDF}
              disabled={isProcessing}
-             className="flex items-center gap-1.5 text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded border border-slate-200 text-xs font-semibold disabled:opacity-50 transition-colors"
+             className="flex items-center gap-1.5 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#272727] px-3 py-1.5 rounded border border-slate-200 dark:border-[#272727] text-xs font-semibold disabled:opacity-50 transition-colors"
              title="Download as PDF"
            >
              {isProcessing ? <div className="w-3 h-3 border-2 border-slate-400 border-t-slate-800 rounded-full animate-spin"/> : <FileText size={14} />}
@@ -787,32 +967,33 @@ export const Editor: React.FC<EditorProps> = ({
            <button 
              onClick={handleCopySlide}
              disabled={isProcessing}
-             className="flex items-center gap-1.5 text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded border border-slate-200 text-xs font-semibold disabled:opacity-50 transition-colors"
+             className="flex items-center gap-1.5 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#272727] px-3 py-1.5 rounded border border-slate-200 dark:border-[#272727] text-xs font-semibold disabled:opacity-50 transition-colors"
              title="Copy image to clipboard"
            >
              {isProcessing ? <div className="w-3 h-3 border-2 border-slate-400 border-t-slate-800 rounded-full animate-spin"/> : <ClipboardCopy size={14} />}
              Copy Slide
            </button>
+           
+           <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
+
            <button 
-             onClick={handleCopyAllText}
-             disabled={isProcessing}
-             className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm disabled:opacity-50 transition-colors"
-             title="Copy full report summary to clipboard"
-           >
-             Copy All
-           </button>
+                onClick={() => setIsClickUpModalOpen(true)}
+                className="flex items-center gap-1.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors ml-auto"
+            >
+               <Layers size={14} /> Export to ClickUp
+            </button>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar */}
-        <div className="w-24 bg-white border-r border-slate-200 flex flex-col py-4 relative shrink-0">
+        <div className="w-24 bg-white dark:bg-[#0f0f0f] border-r border-slate-200 dark:border-[#272727] flex flex-col py-4 relative shrink-0 transition-colors">
            <div className="flex-1 overflow-y-auto flex flex-col items-center gap-3 px-1 no-scrollbar">
              {slides.map((s, i) => (
                <div 
                  key={s.id} 
                  onClick={() => onSelectSlide(s.id)}
-                 className={`relative group cursor-pointer w-16 h-16 rounded-lg border-2 overflow-hidden transition-all shrink-0 ${s.id === activeSlideId ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-slate-300'}`}
+                 className={`relative group cursor-pointer w-16 h-16 rounded-lg border-2 overflow-hidden transition-all shrink-0 ${s.id === activeSlideId ? 'border-blue-500 ring-2 ring-blue-100 dark:ring-blue-900' : 'border-slate-200 dark:border-[#3f3f3f] hover:border-slate-300 dark:hover:border-slate-500'}`}
                >
                  {s.type === 'video' ? (
                    <video src={s.src} className="w-full h-full object-cover pointer-events-none" />
@@ -837,26 +1018,26 @@ export const Editor: React.FC<EditorProps> = ({
                </div>
              ))}
              
-             {/* Sticky Add Button */}
-             <div className="sticky bottom-0 w-full flex justify-center pb-2 pt-2 bg-white z-10 mt-auto" ref={addMenuRef}>
+             {/* Sticky Add Button - Positioned directly next to slides */}
+             <div className="sticky bottom-0 w-full flex justify-center pb-2 pt-2 bg-white dark:bg-[#0f0f0f] z-10" ref={addMenuRef}>
                 {isAddMenuOpen && (
-                   <div className="absolute bottom-full left-1 mb-2 w-44 bg-white rounded-xl shadow-xl border border-slate-200 p-1 flex flex-col gap-1 z-50 animate-in slide-in-from-bottom-2 overflow-hidden">
-                       <button onClick={() => { setIsAddMenuOpen(false); onCaptureScreen(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-blue-600 transition-colors"><Camera size={16} className="text-blue-500" /> Capture Screen</button>
-                       <button onClick={() => { setIsAddMenuOpen(false); onRecordVideo(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-purple-600 transition-colors"><Video size={16} className="text-purple-500" /> Record Video</button>
-                       <button onClick={() => { setIsAddMenuOpen(false); onAddSlide(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg hover:text-emerald-600 transition-colors"><Upload size={16} className="text-emerald-500" /> Upload File</button>
+                   <div className="absolute bottom-full left-1 mb-2 w-44 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-xl border border-slate-200 dark:border-[#272727] p-1 flex flex-col gap-1 z-50 animate-in slide-in-from-bottom-2 overflow-hidden">
+                       <button onClick={() => { setIsAddMenuOpen(false); onCaptureScreen(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-blue-600 dark:hover:text-blue-400 transition-colors"><Camera size={16} className="text-blue-500 dark:text-blue-400" /> Capture Screen</button>
+                       <button onClick={() => { setIsAddMenuOpen(false); onRecordVideo(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-purple-600 dark:hover:text-purple-400 transition-colors"><Video size={16} className="text-purple-500 dark:text-purple-400" /> Record Video</button>
+                       <button onClick={() => { setIsAddMenuOpen(false); onAddSlide(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"><Upload size={16} className="text-emerald-500 dark:text-emerald-400" /> Upload File</button>
                    </div>
                 )}
-                <button onClick={() => setIsAddMenuOpen(!isAddMenuOpen)} className={`w-14 h-14 border-2 border-dashed rounded-xl flex items-center justify-center transition-all shadow-sm bg-white ${isAddMenuOpen ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50'}`}><Plus size={24} className={isAddMenuOpen ? 'rotate-45 transition-transform' : 'transition-transform'} /></button>
+                <button onClick={() => setIsAddMenuOpen(!isAddMenuOpen)} className={`w-14 h-14 border-2 border-dashed rounded-xl flex items-center justify-center transition-all shadow-sm bg-white dark:bg-[#1e1e1e] ${isAddMenuOpen ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-[#3f3f3f] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-[#272727]'}`}><Plus size={24} className={isAddMenuOpen ? 'rotate-45 transition-transform' : 'transition-transform'} /></button>
              </div>
            </div>
         </div>
 
         {/* Canvas */}
-        <div className="flex-1 bg-slate-100 overflow-hidden relative flex items-center justify-center">
+        <div className="flex-1 bg-slate-100 dark:bg-[#0f0f0f] overflow-hidden relative flex items-center justify-center transition-colors">
            <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
            <div 
              ref={containerRef}
-             className="relative shadow-2xl bg-black select-none max-w-[95%] max-h-[90%]"
+             className={`relative shadow-2xl bg-black select-none max-w-[95%] max-h-[90%] ${isDrawing || selectedTool !== ToolType.SELECT ? 'cursor-crosshair' : ''}`}
              onMouseDown={handleMouseDown}
              onMouseMove={handleMouseMove}
              onMouseUp={handleMouseUp}
@@ -877,7 +1058,7 @@ export const Editor: React.FC<EditorProps> = ({
                    const width = Math.abs(ann.end.x - ann.start.x);
                    const height = Math.abs(ann.end.y - ann.start.y);
                    return (
-                     <g key={ann.id} className="pointer-events-auto cursor-pointer group" onClick={(e) => { e.stopPropagation(); setSelectedAnnotationId(ann.id); }}>
+                     <g key={ann.id} className={`pointer-events-auto group ${isSelected && selectedTool === ToolType.SELECT ? 'cursor-move' : 'cursor-pointer'}`} onClick={(e) => { e.stopPropagation(); setSelectedAnnotationId(ann.id); }}>
                        {ann.type === ToolType.RECTANGLE && <rect x={minX} y={minY} width={width} height={height} fill={hexToRgba(ann.color, 0.2)} stroke={isSelected ? "#3b82f6" : ann.color} strokeWidth={3} rx={4} />}
                        {ann.type === ToolType.CIRCLE && <ellipse cx={minX + width / 2} cy={minY + height / 2} rx={width / 2} ry={height / 2} fill={hexToRgba(ann.color, 0.2)} stroke={isSelected ? "#3b82f6" : ann.color} strokeWidth={3} />}
                        {isSelected && (<><rect x={minX-5} y={minY-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/><rect x={minX+width-5} y={minY-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/><rect x={minX-5} y={minY+height-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/><rect x={minX+width-5} y={minY+height-5} width="10" height="10" fill="white" stroke="#3b82f6" strokeWidth="2"/></>)}
@@ -885,7 +1066,7 @@ export const Editor: React.FC<EditorProps> = ({
                      </g>
                    );
                 })}
-                {isDrawing && startPoint && currentPoint && !resizeHandle && (
+                {isDrawing && startPoint && currentPoint && !resizeHandle && !isDraggingShape && (
                    <g>
                       {selectedTool === ToolType.RECTANGLE && <rect x={Math.min(startPoint.x, currentPoint.x)} y={Math.min(startPoint.y, currentPoint.y)} width={Math.abs(currentPoint.x - startPoint.x)} height={Math.abs(currentPoint.y - startPoint.y)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4" />}
                       {selectedTool === ToolType.CIRCLE && <ellipse cx={startPoint.x + (currentPoint.x - startPoint.x) / 2} cy={startPoint.y + (currentPoint.y - startPoint.y) / 2} rx={Math.abs((currentPoint.x - startPoint.x) / 2)} ry={Math.abs((currentPoint.y - startPoint.y) / 2)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4" />}
@@ -902,26 +1083,32 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
 
         {/* Right Sidebar */}
-        <div className="w-80 bg-white border-l border-slate-200 flex flex-col shrink-0">
-           <div className="h-12 border-b border-slate-100 flex items-center justify-between px-4">
-             <h3 className="font-bold text-slate-800 text-lg">Comments</h3>
-             <button className="text-slate-400 hover:text-blue-600"><Copy size={16} /></button>
+        <div className="w-80 bg-white dark:bg-[#0f0f0f] border-l border-slate-200 dark:border-[#272727] flex flex-col shrink-0 transition-colors">
+           <div className="h-12 border-b border-slate-100 dark:border-[#272727] flex items-center justify-between px-4">
+             <h3 className="font-bold text-slate-800 dark:text-white text-lg">Comments</h3>
            </div>
            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {annotations.length === 0 ? (
-                <div className="text-center mt-10 opacity-40"><MousePointer2 size={48} className="mx-auto mb-2" /><p className="text-sm">Draw a shape to start annotating</p></div>
+                <div className="text-center mt-10 opacity-40 dark:text-zinc-400"><MousePointer2 size={48} className="mx-auto mb-2" /><p className="text-sm">Draw a shape to start annotating</p></div>
               ) : (
                 annotations.map((ann, index) => (
-                  <div key={ann.id} className={`relative group rounded-xl border p-3 transition-all ${selectedAnnotationId === ann.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 bg-white hover:border-blue-300'}`} onClick={() => setSelectedAnnotationId(ann.id)}>
-                    <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 text-white rounded-md flex items-center justify-center text-xs font-bold shrink-0" style={{ backgroundColor: ann.color }}>{index + 1}</div><div className="ml-auto flex"><button onClick={(e) => { e.stopPropagation(); handleDeleteSelected(); }} className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button></div></div>
-                    <textarea className="w-full text-sm bg-transparent border-none resize-none focus:ring-0 p-0 text-slate-700 placeholder:text-slate-300" placeholder="Describe the issue..." rows={2} value={ann.comment} onChange={(e) => handleCommentChange(ann.id, e.target.value)} />
-                    {ann.comment.length > 3 && (<div className="mt-2 flex"><button onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }} disabled={aiLoadingId === ann.id} className="flex items-center gap-1.5 text-[10px] font-bold text-purple-600 bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded-md transition-colors"><Wand2 size={12} className={aiLoadingId === ann.id ? 'animate-spin' : ''} />{aiLoadingId === ann.id ? 'Refining...' : 'Auto-Fix Grammar'}</button></div>)}
+                  <div key={ann.id} className={`relative group rounded-xl border p-3 transition-all ${selectedAnnotationId === ann.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-sm' : 'border-slate-200 dark:border-[#272727] bg-white dark:bg-[#1e1e1e] hover:border-blue-300 dark:hover:border-blue-700'}`} onClick={() => setSelectedAnnotationId(ann.id)}>
+                    <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 text-white rounded-md flex items-center justify-center text-xs font-bold shrink-0" style={{ backgroundColor: ann.color }}>{index + 1}</div><div className="ml-auto flex"><button onClick={(e) => { e.stopPropagation(); handleDeleteSelected(); }} className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button></div></div>
+                    <textarea 
+                        ref={el => { commentRefs.current[ann.id] = el; }}
+                        className="w-full text-sm bg-transparent border-none resize-y focus:ring-0 p-0 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-600 min-h-[60px]" 
+                        placeholder="Describe the issue..." 
+                        rows={3} 
+                        value={ann.comment} 
+                        onChange={(e) => handleCommentChange(ann.id, e.target.value)} 
+                    />
+                    {ann.comment.length > 3 && (<div className="mt-2 flex"><button onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }} disabled={aiLoadingId === ann.id} className="flex items-center gap-1.5 text-[10px] font-bold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 px-2 py-1 rounded-md transition-colors"><Wand2 size={12} className={aiLoadingId === ann.id ? 'animate-spin' : ''} />{aiLoadingId === ann.id ? 'Refining...' : 'Auto-Fix Grammar'}</button></div>)}
                   </div>
                 ))
               )}
            </div>
-           <div className="p-4 border-t border-slate-100">
-              <button onClick={() => { setAnnotations([]); onUpdateSlide({...activeSlide, annotations: []}); }} className="w-full py-3 border border-slate-200 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition font-medium">Discard All</button>
+           <div className="p-4 border-t border-slate-100 dark:border-[#272727]">
+              <button onClick={() => { setAnnotations([]); onUpdateSlide({...activeSlide, annotations: []}); }} className="w-full py-3 border border-slate-200 dark:border-[#272727] text-slate-500 dark:text-zinc-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 hover:border-red-200 dark:hover:border-red-800 transition font-medium">Discard All</button>
            </div>
         </div>
       </div>

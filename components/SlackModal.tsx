@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
-import { SlackExportMode, Slide } from '../types';
-import { Slack, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, MessageSquare, Images, ListTree } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { SlackExportMode, Slide, IntegrationConfig } from '../types';
+import { Slack, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, MessageSquare, Images, ListTree, ArrowRight } from 'lucide-react';
 
 interface SlackModalProps {
   isOpen: boolean;
@@ -10,6 +10,7 @@ interface SlackModalProps {
   loading: boolean;
   slides: Slide[];
   error?: string | null;
+  onConfigure?: () => void;
 }
 
 export const SlackModal: React.FC<SlackModalProps> = ({
@@ -18,18 +19,67 @@ export const SlackModal: React.FC<SlackModalProps> = ({
   onExport,
   loading,
   slides,
-  error
+  error,
+  onConfigure
 }) => {
   const [mode, setMode] = useState<SlackExportMode>('current');
+  const [isConfigured, setIsConfigured] = useState(true);
+
+  useEffect(() => {
+      if (isOpen) {
+          const globalConfig = localStorage.getItem('bugsnap_config');
+          if (globalConfig) {
+              const parsed: IntegrationConfig = JSON.parse(globalConfig);
+              if (!parsed.slackToken || !parsed.slackChannel) {
+                  setIsConfigured(false);
+              } else {
+                  setIsConfigured(true);
+              }
+          } else {
+              setIsConfigured(false);
+          }
+      }
+  }, [isOpen]);
 
   if (!isOpen) return null;
+
+  // Not Configured State
+  if (!isConfigured) {
+      return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-[#272727] transition-colors">
+                <div className="p-6 text-center flex flex-col items-center">
+                    <div className="w-16 h-16 bg-[#4A154B]/10 dark:bg-[#4A154B]/20 text-[#4A154B] rounded-2xl flex items-center justify-center mb-4">
+                        <Slack size={32} />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Connect Slack</h2>
+                    <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6">
+                        Connect your Slack workspace to share bug reports and dashboard updates instantly.
+                    </p>
+                    <button 
+                        onClick={onConfigure}
+                        className="w-full py-3 bg-[#4A154B] hover:bg-[#3f1240] text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2"
+                    >
+                        Connect Now <ArrowRight size={18} />
+                    </button>
+                    <button 
+                        onClick={onClose}
+                        className="mt-4 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300 text-sm font-medium"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+      )
+  }
 
   const isCorsDemoError = error?.includes('corsdemo');
   const cleanError = error?.replace(/Slack API Error: /, '');
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+      <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-[#272727] transition-colors">
         {/* Header */}
         <div className="bg-[#4A154B] p-4 flex items-center justify-between text-white">
           <div className="flex items-center gap-2 font-bold text-lg">
@@ -44,14 +94,14 @@ export const SlackModal: React.FC<SlackModalProps> = ({
         {/* Body */}
         <div className="p-6">
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-sm">
+            <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm">
               {isCorsDemoError ? (
                  <div className="flex flex-col gap-2">
-                    <div className="flex items-start gap-2 text-red-800 font-bold">
+                    <div className="flex items-start gap-2 text-red-800 dark:text-red-300 font-bold">
                         <AlertCircle size={16} className="mt-0.5 shrink-0" />
                         <span>Proxy Activation Required</span>
                     </div>
-                    <p className="text-red-700">
+                    <p className="text-red-700 dark:text-red-400">
                         The browser security proxy (cors-anywhere) requires a one-time verification.
                     </p>
                     <div className="mt-2 space-y-2">
@@ -59,7 +109,7 @@ export const SlackModal: React.FC<SlackModalProps> = ({
                             href="https://cors-anywhere.herokuapp.com/corsdemo" 
                             target="_blank" 
                             rel="noreferrer"
-                            className="flex items-center justify-center gap-2 w-full bg-red-100 hover:bg-red-200 text-red-900 py-2 rounded font-medium transition-colors"
+                            className="flex items-center justify-center gap-2 w-full bg-red-100 dark:bg-red-900/40 hover:bg-red-200 dark:hover:bg-red-900/60 text-red-900 dark:text-red-100 py-2 rounded font-medium transition-colors"
                         >
                             <ExternalLink size={14} /> 1. Click here to Unlock Proxy
                         </a>
@@ -72,7 +122,7 @@ export const SlackModal: React.FC<SlackModalProps> = ({
                     </div>
                  </div>
               ) : (
-                 <div className="flex flex-col gap-1 text-red-700 break-words">
+                 <div className="flex flex-col gap-1 text-red-700 dark:text-red-400 break-words">
                     <div className="flex items-start gap-2 font-bold">
                         <AlertCircle size={16} className="mt-0.5 shrink-0" />
                         <span>Export Failed</span>
@@ -85,52 +135,52 @@ export const SlackModal: React.FC<SlackModalProps> = ({
 
           {!isCorsDemoError && (
             <>
-                <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-3">Select Post Format</h3>
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-zinc-300 uppercase tracking-wider mb-3">Select Post Format</h3>
                 <div className="space-y-3">
                     {/* Option 1: Current Slide */}
                     <div 
                     onClick={() => setMode('current')}
-                    className={`cursor-pointer p-4 rounded-lg border-2 transition-all flex items-start gap-3 ${mode === 'current' ? 'border-[#4A154B] bg-[#4A154B]/5' : 'border-slate-100 hover:border-slate-200'}`}
+                    className={`cursor-pointer p-4 rounded-lg border-2 transition-all flex items-start gap-3 ${mode === 'current' ? 'border-[#4A154B] bg-[#4A154B]/5 dark:bg-[#4A154B]/20' : 'border-slate-100 dark:border-[#272727] hover:border-slate-200 dark:hover:border-[#3f3f3f]'}`}
                     >
-                    <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mode === 'current' ? 'bg-[#4A154B] text-white' : 'bg-slate-100 text-slate-400'}`}>
+                    <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mode === 'current' ? 'bg-[#4A154B] text-white' : 'bg-slate-100 dark:bg-[#272727] text-slate-400'}`}>
                         <MessageSquare size={16} />
                     </div>
                     <div>
-                        <h4 className="font-bold text-slate-800 text-sm">Current Slide</h4>
-                        <p className="text-xs text-slate-500 mt-1">Posts the active slide image and description as a single message.</p>
+                        <h4 className="font-bold text-slate-800 dark:text-white text-sm">Current Slide</h4>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Posts the active slide image and description as a single message.</p>
                     </div>
                     </div>
 
                     {/* Option 2: All Files */}
                     <div 
                     onClick={() => setMode('all_files')}
-                    className={`cursor-pointer p-4 rounded-lg border-2 transition-all flex items-start gap-3 ${mode === 'all_files' ? 'border-[#4A154B] bg-[#4A154B]/5' : 'border-slate-100 hover:border-slate-200'}`}
+                    className={`cursor-pointer p-4 rounded-lg border-2 transition-all flex items-start gap-3 ${mode === 'all_files' ? 'border-[#4A154B] bg-[#4A154B]/5 dark:bg-[#4A154B]/20' : 'border-slate-100 dark:border-[#272727] hover:border-slate-200 dark:hover:border-[#3f3f3f]'}`}
                     >
-                     <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mode === 'all_files' ? 'bg-[#4A154B] text-white' : 'bg-slate-100 text-slate-400'}`}>
+                     <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mode === 'all_files' ? 'bg-[#4A154B] text-white' : 'bg-slate-100 dark:bg-[#272727] text-slate-400'}`}>
                         <Images size={16} />
                     </div>
                     <div>
-                        <h4 className="font-bold text-slate-800 text-sm">All Slides (Files)</h4>
-                        <p className="text-xs text-slate-500 mt-1">Posts {slides.length} images as individual file uploads to the channel.</p>
+                        <h4 className="font-bold text-slate-800 dark:text-white text-sm">All Slides (Files)</h4>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Posts {slides.length} images as individual file uploads to the channel.</p>
                     </div>
                     </div>
 
                     {/* Option 3: Threaded */}
                     <div 
                     onClick={() => setMode('thread')}
-                    className={`cursor-pointer p-4 rounded-lg border-2 transition-all flex items-start gap-3 ${mode === 'thread' ? 'border-[#4A154B] bg-[#4A154B]/5' : 'border-slate-100 hover:border-slate-200'}`}
+                    className={`cursor-pointer p-4 rounded-lg border-2 transition-all flex items-start gap-3 ${mode === 'thread' ? 'border-[#4A154B] bg-[#4A154B]/5 dark:bg-[#4A154B]/20' : 'border-slate-100 dark:border-[#272727] hover:border-slate-200 dark:hover:border-[#3f3f3f]'}`}
                     >
-                     <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mode === 'thread' ? 'bg-[#4A154B] text-white' : 'bg-slate-100 text-slate-400'}`}>
+                     <div className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mode === 'thread' ? 'bg-[#4A154B] text-white' : 'bg-slate-100 dark:bg-[#272727] text-slate-400'}`}>
                         <ListTree size={16} />
                     </div>
                     <div>
-                        <h4 className="font-bold text-slate-800 text-sm">Threaded Report</h4>
-                        <p className="text-xs text-slate-500 mt-1">Creates a parent message "Bug Report", then replies with each slide image.</p>
+                        <h4 className="font-bold text-slate-800 dark:text-white text-sm">Threaded Report</h4>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Creates a parent message "Bug Report", then replies with each slide image.</p>
                     </div>
                     </div>
                 </div>
 
-                <div className="mt-4 p-3 bg-slate-50 rounded text-xs text-slate-500">
+                <div className="mt-4 p-3 bg-slate-50 dark:bg-[#0f0f0f]/50 rounded text-xs text-slate-500 dark:text-zinc-400">
                     <p className="flex items-start gap-1.5">
                     <AlertCircle size={14} className="shrink-0 mt-0.5" />
                     <span>Ensure the bot (@BugSnap) is invited to the channel.</span>
@@ -141,11 +191,11 @@ export const SlackModal: React.FC<SlackModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+        <div className="p-4 border-t border-slate-100 dark:border-[#272727] bg-slate-50 dark:bg-[#0f0f0f] flex justify-end gap-3">
           <button 
             onClick={onClose}
             disabled={loading}
-            className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-200 rounded-lg transition text-sm"
+            className="px-4 py-2 text-slate-600 dark:text-zinc-400 font-medium hover:bg-slate-200 dark:hover:bg-[#272727] rounded-lg transition text-sm"
           >
             Cancel
           </button>

@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -8,6 +9,7 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -17,6 +19,12 @@
                 500: '#3b82f6',
                 600: '#2563eb',
                 900: '#1e3a8a',
+              },
+              dark: {
+                bg: '#0f0f0f',
+                surface: '#1e1e1e',
+                border: '#272727',
+                hover: '#3f3f3f'
               }
             }
           }
@@ -30,14 +38,20 @@
         height: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #f1f1f1;
+        background: transparent;
       }
       ::-webkit-scrollbar-thumb {
         background: #cbd5e1;
         border-radius: 4px;
       }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #3f3f3f;
+      }
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background: #525252;
       }
       .canvas-container {
         cursor: crosshair;
@@ -57,7 +71,7 @@
 }
 </script>
 </head>
-  <body class="bg-slate-50 text-slate-900 font-sans antialiased overflow-hidden">
+  <body class="bg-slate-50 dark:bg-[#0f0f0f] text-slate-900 dark:text-zinc-100 font-sans antialiased overflow-hidden transition-colors duration-200">
     <div id="root" class="h-screen w-screen flex flex-col"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

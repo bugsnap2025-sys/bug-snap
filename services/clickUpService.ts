@@ -30,6 +30,21 @@ const truncate = (str: string, maxLength: number): string => {
 };
 
 /**
+ * Validates the ClickUp Personal Access Token by fetching the authenticated user.
+ */
+export const validateClickUpToken = async (token: string): Promise<boolean> => {
+    try {
+        const response = await fetchWithProxy('https://api.clickup.com/api/v2/user', {
+            headers: { 'Authorization': token }
+        });
+        return response.ok;
+    } catch (error) {
+        console.error("Token validation failed:", error);
+        return false;
+    }
+};
+
+/**
  * Recursively fetches all lists available to the user.
  * Flow: Teams -> Spaces -> Folders/Lists -> Lists
  */

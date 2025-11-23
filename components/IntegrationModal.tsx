@@ -1,7 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2 } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
+import { validateClickUpToken } from '../services/clickUpService';
 
 interface IntegrationModalProps {
   isOpen: boolean;
@@ -20,11 +22,13 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
 }) => {
   const [formData, setFormData] = useState<Partial<IntegrationConfig>>({});
   const [error, setError] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
   
   useEffect(() => {
     if (isOpen && source) {
       setFormData(currentConfig);
       setError(null);
+      setIsValidating(false);
     }
   }, [isOpen, source, currentConfig]);
 
@@ -35,28 +39,43 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     setError(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     let newConfig = { ...formData };
     
+    setIsValidating(true);
+
     if (source === 'ClickUp') {
         if (!newConfig.clickUpToken) {
             setError("Personal Access Token is required.");
+            setIsValidating(false);
             return;
         }
+        
+        // Validate Token
+        const isValid = await validateClickUpToken(newConfig.clickUpToken);
+        if (!isValid) {
+            setError("Invalid Personal Access Token. Authentication failed.");
+            setIsValidating(false);
+            return;
+        }
+
         // List selection is now handled in the Dashboard/Export modal
     } 
     else if (source === 'Slack') {
         if (!newConfig.slackToken || !newConfig.slackToken.startsWith('xoxb-')) {
             setError("Invalid Bot Token. It must start with 'xoxb-'.");
+            setIsValidating(false);
             return;
         }
         if (!newConfig.slackChannel) {
             setError("Channel ID is required.");
+            setIsValidating(false);
             return;
         }
         const extractedId = extractChannelId(newConfig.slackChannel);
         if (!extractedId) {
              setError("Invalid Slack Channel ID.");
+             setIsValidating(false);
              return;
         }
         newConfig.slackChannel = extractedId;
@@ -64,12 +83,30 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     else if (source === 'Jira') {
         if (!newConfig.jiraUrl || !newConfig.jiraToken || !newConfig.jiraEmail) {
              setError("All fields are required for Jira.");
+             setIsValidating(false);
              return;
         }
     }
 
+    setIsValidating(false);
     onSave(newConfig as IntegrationConfig);
     onClose();
+  };
+
+  const handleDisconnect = () => {
+      let newConfig = { ...formData };
+      
+      if (source === 'ClickUp') {
+          newConfig.clickUpToken = undefined;
+          newConfig.clickUpListId = undefined;
+          newConfig.clickUpListName = undefined;
+      } else if (source === 'Slack') {
+          newConfig.slackToken = undefined;
+          newConfig.slackChannel = undefined;
+      }
+      
+      onSave(newConfig as IntegrationConfig);
+      onClose();
   };
 
   // Render content based on source
@@ -79,18 +116,18 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             return (
                 <div className="space-y-6">
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Personal Access Token</label>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Personal Access Token</label>
                         <div className="relative">
                             <input 
                                 type="password" 
-                                className="w-full border-slate-300 rounded-lg shadow-sm focus:border-[#7B68EE] focus:ring-[#7B68EE] p-3 border pr-10 font-mono text-sm"
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#7B68EE] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
                                 placeholder="pk_123456_..."
                                 value={formData.clickUpToken || ''}
                                 onChange={(e) => handleChange('clickUpToken', e.target.value)}
                             />
-                            <Lock className="absolute right-3 top-3.5 text-slate-400" size={16} />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
-                        <p className="text-xs text-slate-500 mt-2">
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-2">
                            List selection is now available directly on the Dashboard and Export screen.
                         </p>
                     </div>
@@ -100,29 +137,29 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             return (
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Bot User OAuth Token (xoxb-...)</label>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Bot User OAuth Token (xoxb-...)</label>
                         <div className="relative">
                             <input 
                                 type="password" 
-                                className="w-full border-slate-300 rounded-lg shadow-sm focus:border-[#4A154B] focus:ring-[#4A154B] p-3 border pr-10 font-mono text-sm"
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#4A154B] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
                                 placeholder="xoxb-..."
                                 value={formData.slackToken || ''}
                                 onChange={(e) => handleChange('slackToken', e.target.value)}
                             />
-                            <Lock className="absolute right-3 top-3.5 text-slate-400" size={16} />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
                     </div>
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">Channel ID</label>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Channel ID</label>
                         <div className="relative">
                             <input 
                                 type="text" 
-                                className="w-full border-slate-300 rounded-lg shadow-sm focus:border-[#4A154B] focus:ring-[#4A154B] p-3 border pr-10 text-sm"
-                                placeholder="C123456"
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#4A154B] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="C12345678"
                                 value={formData.slackChannel || ''}
                                 onChange={(e) => handleChange('slackChannel', e.target.value)}
                             />
-                            <Hash className="absolute right-3 top-3.5 text-slate-400" size={16} />
+                            <Hash className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
                     </div>
                 </div>
@@ -130,7 +167,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira':
             return (
                  <div className="space-y-4">
-                     <p className="text-sm text-slate-500 italic">Jira integration coming soon. Configuration is currently unavailable.</p>
+                     <p className="text-sm text-slate-500 dark:text-zinc-400 italic">Jira integration coming soon. Configuration is currently unavailable.</p>
                  </div>
             );
         default:
@@ -157,8 +194,8 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in p-4">
+      <div className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-[#272727] transition-colors">
         <div className="p-4 flex items-center justify-between text-white" style={{ backgroundColor: getColor() }}>
            <div className="flex items-center gap-2 font-bold text-lg">
              {getIcon()}
@@ -171,7 +208,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
 
         <div className="p-6">
             {error && (
-                <div className="mb-4 bg-red-50 text-red-700 p-3 rounded-lg text-sm flex items-start gap-2">
+                <div className="mb-4 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-3 rounded-lg text-sm flex items-start gap-2">
                     <AlertCircle size={16} className="mt-0.5 shrink-0" />
                     <span>{error}</span>
                 </div>
@@ -180,17 +217,28 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             {renderContent()}
         </div>
 
-        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-           <button onClick={onClose} className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-200 rounded-lg transition text-sm">
-             Cancel
-           </button>
+        <div className="p-4 border-t border-slate-100 dark:border-[#272727] bg-slate-50 dark:bg-[#0f0f0f] flex justify-between gap-3">
            <button 
-             onClick={handleSave}
-             className="px-6 py-2 text-white font-bold rounded-lg shadow-sm transition flex items-center gap-2 text-sm"
-             style={{ backgroundColor: getColor() }}
+             onClick={handleDisconnect} 
+             className="px-4 py-2 text-red-600 dark:text-red-400 font-medium hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition text-sm flex items-center gap-2"
            >
-             <Save size={16} /> Save Credentials
+             <Trash2 size={16} /> Disconnect
            </button>
+           
+           <div className="flex gap-2">
+               <button onClick={onClose} disabled={isValidating} className="px-4 py-2 text-slate-600 dark:text-zinc-300 font-medium hover:bg-slate-200 dark:hover:bg-[#272727] rounded-lg transition text-sm">
+                 Cancel
+               </button>
+               <button 
+                 onClick={handleSave}
+                 disabled={isValidating}
+                 className="px-6 py-2 text-white font-bold rounded-lg shadow-sm transition flex items-center gap-2 text-sm disabled:opacity-70"
+                 style={{ backgroundColor: getColor() }}
+               >
+                 {isValidating ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
+                 Save Credentials
+               </button>
+           </div>
         </div>
       </div>
     </div>
