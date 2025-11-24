@@ -45,6 +45,11 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
   const handleSave = async () => {
     let newConfig = { ...formData };
     
+    // Trim string values to handle copy-paste errors
+    if (newConfig.clickUpToken) newConfig.clickUpToken = newConfig.clickUpToken.trim();
+    if (newConfig.slackToken) newConfig.slackToken = newConfig.slackToken.trim();
+    if (newConfig.slackChannel) newConfig.slackChannel = newConfig.slackChannel.trim();
+
     setIsValidating(true);
     setError(null);
     setIsCorsDemoError(false);

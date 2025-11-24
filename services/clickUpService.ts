@@ -30,14 +30,24 @@ const truncate = (str: string, maxLength: number): string => {
 };
 
 /**
- * Validates the ClickUp Personal Access Token by fetching the authenticated user.
+ * Validates the ClickUp Personal Access Token.
+ * Tries multiple endpoints (/user and /team) to ensure validity across different user roles.
  */
 export const validateClickUpToken = async (token: string): Promise<boolean> => {
     try {
-        const response = await fetchWithProxy('https://api.clickup.com/api/v2/user', {
+        // 1. Try fetching User (Standard check)
+        const userRes = await fetchWithProxy('https://api.clickup.com/api/v2/user', {
             headers: { 'Authorization': token }
         });
-        return response.ok;
+        if (userRes.ok) return true;
+
+        // 2. Fallback: Try fetching Teams (Some tokens/roles might behave differently)
+        const teamRes = await fetchWithProxy('https://api.clickup.com/api/v2/team', {
+            headers: { 'Authorization': token }
+        });
+        if (teamRes.ok) return true;
+
+        return false;
     } catch (error) {
         console.error("Token validation failed:", error);
         // Bubble up specific proxy requirement errors
@@ -51,6 +61,7 @@ export const validateClickUpToken = async (token: string): Promise<boolean> => {
 /**
  * Recursively fetches all lists available to the user.
  * Flow: Teams -> Spaces -> Folders/Lists -> Lists
+ * Robustly handles permission errors (403) by skipping inaccessible resources.
  */
 export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarchyList[]> => {
     try {
@@ -58,61 +69,76 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
         const teamsRes = await fetchWithProxy('https://api.clickup.com/api/v2/team', {
             headers: { 'Authorization': token }
         });
+        if (!teamsRes.ok) return []; // If we can't get teams, we can't get anything
+        
         const teamsData = await teamsRes.json();
         const teams = teamsData.teams || [];
         
         let allLists: ClickUpHierarchyList[] = [];
 
-        // 2. Iterate Teams to get Spaces
+        // 2. Iterate Teams
         for (const team of teams) {
-            const spacesRes = await fetchWithProxy(`https://api.clickup.com/api/v2/team/${team.id}/space?archived=false`, {
-                headers: { 'Authorization': token }
-            });
-            const spacesData = await spacesRes.json();
-            const spaces = spacesData.spaces || [];
-
-            // 3. Iterate Spaces to get Folders and Folderless Lists
-            for (const space of spaces) {
-                // Get Folders
-                const foldersRes = await fetchWithProxy(`https://api.clickup.com/api/v2/space/${space.id}/folder?archived=false`, {
+            try {
+                const spacesRes = await fetchWithProxy(`https://api.clickup.com/api/v2/team/${team.id}/space?archived=false`, {
                     headers: { 'Authorization': token }
                 });
-                const foldersData = await foldersRes.json();
-                const folders = foldersData.folders || [];
+                // If a user lacks access to spaces in a team, skip this team
+                if (!spacesRes.ok) continue;
 
-                // Get Folderless Lists
-                const listsRes = await fetchWithProxy(`https://api.clickup.com/api/v2/space/${space.id}/list?archived=false`, {
-                    headers: { 'Authorization': token }
-                });
-                const listsData = await listsRes.json();
-                const folderlessLists = listsData.lists || [];
+                const spacesData = await spacesRes.json();
+                const spaces = spacesData.spaces || [];
 
-                // Add Folderless Lists
-                folderlessLists.forEach((l: any) => {
-                    allLists.push({
-                        id: l.id,
-                        name: l.name,
-                        groupName: `${space.name} (Space)`
-                    });
-                });
+                // 3. Iterate Spaces
+                for (const space of spaces) {
+                    try {
+                        // Fetch Folders and Folderless Lists in parallel
+                        const [foldersRes, listsRes] = await Promise.all([
+                            fetchWithProxy(`https://api.clickup.com/api/v2/space/${space.id}/folder?archived=false`, { headers: { 'Authorization': token } }).catch(() => null),
+                            fetchWithProxy(`https://api.clickup.com/api/v2/space/${space.id}/list?archived=false`, { headers: { 'Authorization': token } }).catch(() => null)
+                        ]);
 
-                // 4. Iterate Folders to get Lists
-                for (const folder of folders) {
-                    const folderListsRes = await fetchWithProxy(`https://api.clickup.com/api/v2/folder/${folder.id}/list?archived=false`, {
-                         headers: { 'Authorization': token }
-                    });
-                    const folderListsData = await folderListsRes.json();
-                    const folderLists = folderListsData.lists || [];
-                    
-                    folderLists.forEach((l: any) => {
-                         allLists.push({
-                             id: l.id,
-                             name: l.name,
-                             groupName: `${space.name} > ${folder.name}`
-                         });
-                    });
+                        // Process Folderless Lists
+                        if (listsRes && listsRes.ok) {
+                            const listsData = await listsRes.json();
+                            const folderlessLists = listsData.lists || [];
+                            folderlessLists.forEach((l: any) => {
+                                allLists.push({
+                                    id: l.id,
+                                    name: l.name,
+                                    groupName: `${space.name} (Space)`
+                                });
+                            });
+                        }
+
+                        // Process Folders
+                        if (foldersRes && foldersRes.ok) {
+                            const foldersData = await foldersRes.json();
+                            const folders = foldersData.folders || [];
+                            
+                            // 4. Iterate Folders to get Lists
+                            for (const folder of folders) {
+                                try {
+                                    const folderListsRes = await fetchWithProxy(`https://api.clickup.com/api/v2/folder/${folder.id}/list?archived=false`, {
+                                         headers: { 'Authorization': token }
+                                    });
+                                    if (folderListsRes.ok) {
+                                        const folderListsData = await folderListsRes.json();
+                                        const folderLists = folderListsData.lists || [];
+                                        
+                                        folderLists.forEach((l: any) => {
+                                             allLists.push({
+                                                 id: l.id,
+                                                 name: l.name,
+                                                 groupName: `${space.name} > ${folder.name}`
+                                             });
+                                        });
+                                    }
+                                } catch (e) { /* Ignore folder access error */ }
+                            }
+                        }
+                    } catch (e) { /* Ignore space access error */ }
                 }
-            }
+            } catch (e) { /* Ignore team iteration error */ }
         }
         return allLists;
 

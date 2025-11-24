@@ -61,6 +61,11 @@ export const IntegrationsSettings: React.FC = () => {
   const handleSave = () => {
     let finalConfig = { ...config };
     
+    // Trim keys and IDs to prevent errors
+    if (finalConfig.clickUpToken) finalConfig.clickUpToken = finalConfig.clickUpToken.trim();
+    if (finalConfig.slackToken) finalConfig.slackToken = finalConfig.slackToken.trim();
+    if (finalConfig.slackChannel) finalConfig.slackChannel = finalConfig.slackChannel.trim();
+
     // Clean up ClickUp List ID
     if (finalConfig.clickUpListId) {
         const extracted = extractListId(finalConfig.clickUpListId);
