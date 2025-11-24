@@ -1,11 +1,22 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 
+// Safely retrieve API Key to prevent "process is not defined" crashes in browser
+const getApiKey = () => {
+  try {
+    return typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+  } catch (e) {
+    return undefined;
+  }
+};
+
+const API_KEY = getApiKey();
+
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// We pass an empty string if undefined to allow the app to load, though API calls will fail gracefully later
+const ai = new GoogleGenAI({ apiKey: API_KEY || "" });
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
-  if (!process.env.API_KEY) {
+  if (!API_KEY) {
     console.warn("Gemini API Key missing. Returning raw text.");
     return rawText; 
   }
@@ -35,7 +46,7 @@ export const refineBugReport = async (rawText: string, context: string = "genera
 };
 
 export const generateMarkdownReport = async (slideTitle: string, annotations: any[]): Promise<string> => {
-  if (!process.env.API_KEY) return "";
+  if (!API_KEY) return "";
 
   try {
     const modelId = 'gemini-2.5-flash';
@@ -66,7 +77,7 @@ export const generateAIReportMetadata = async (
   slideName: string, 
   annotations: any[]
 ): Promise<{ title: string, description: string }> => {
-  if (!process.env.API_KEY) {
+  if (!API_KEY) {
     return { title: slideName, description: "" };
   }
 

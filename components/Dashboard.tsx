@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, ClickUpHierarchyList, DashboardFilter, SortField, SortOrder } from '../types';
 import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpService';
@@ -40,10 +39,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   
   // Initialize with persisted list ID if available
   const [selectedListId, setSelectedListId] = useState<string>(() => {
-      const savedConfig = localStorage.getItem('bugsnap_config');
-      if (savedConfig) {
-          const config = JSON.parse(savedConfig);
-          return config.clickUpListId || '';
+      try {
+        const savedConfig = localStorage.getItem('bugsnap_config');
+        if (savedConfig) {
+            const config = JSON.parse(savedConfig);
+            return config.clickUpListId || '';
+        }
+      } catch (e) {
+          console.error("Failed to parse config", e);
       }
       return '';
   });
@@ -68,40 +71,44 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
   // Load Lists on Mount (If ClickUp Token exists)
   useEffect(() => {
-     const savedConfig = localStorage.getItem('bugsnap_config');
-     if (savedConfig) {
-         const config: IntegrationConfig = JSON.parse(savedConfig);
-         if (config.clickUpToken) {
-             setIsLoadingLists(true);
-             getAllClickUpLists(config.clickUpToken)
-                 .then(lists => {
-                     setAvailableLists(lists);
-                     // If currently selected list is empty, default to config or first
-                     if (!selectedListId) {
-                         if (config.clickUpListId) {
-                             setSelectedListId(config.clickUpListId);
-                         } else if (lists.length > 0) {
-                             setSelectedListId(lists[0].id);
+     try {
+         const savedConfig = localStorage.getItem('bugsnap_config');
+         if (savedConfig) {
+             const config: IntegrationConfig = JSON.parse(savedConfig);
+             if (config.clickUpToken) {
+                 setIsLoadingLists(true);
+                 getAllClickUpLists(config.clickUpToken)
+                     .then(lists => {
+                         setAvailableLists(lists);
+                         // If currently selected list is empty, default to config or first
+                         if (!selectedListId) {
+                             if (config.clickUpListId) {
+                                 setSelectedListId(config.clickUpListId);
+                             } else if (lists.length > 0) {
+                                 setSelectedListId(lists[0].id);
+                             }
                          }
-                     }
-                 })
-                 .catch(err => console.error("Failed to load lists for dashboard", err))
-                 .finally(() => setIsLoadingLists(false));
+                     })
+                     .catch(err => console.error("Failed to load lists for dashboard", err))
+                     .finally(() => setIsLoadingLists(false));
+             }
          }
-     }
+     } catch(e) { console.error("Config load error", e); }
   }, []);
 
   const handleListChange = (newListId: string) => {
       setSelectedListId(newListId);
       // Persist selection
-      const savedConfig = localStorage.getItem('bugsnap_config');
-      if (savedConfig) {
-          const config = JSON.parse(savedConfig);
-          config.clickUpListId = newListId;
-          const listName = availableLists.find(l => l.id === newListId)?.name;
-          if (listName) config.clickUpListName = listName;
-          localStorage.setItem('bugsnap_config', JSON.stringify(config));
-      }
+      try {
+          const savedConfig = localStorage.getItem('bugsnap_config');
+          if (savedConfig) {
+              const config = JSON.parse(savedConfig);
+              config.clickUpListId = newListId;
+              const listName = availableLists.find(l => l.id === newListId)?.name;
+              if (listName) config.clickUpListName = listName;
+              localStorage.setItem('bugsnap_config', JSON.stringify(config));
+          }
+      } catch (e) { console.error("Failed to save list selection", e); }
       // Reload data handled by effect
   };
 
@@ -114,51 +121,51 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
     setIsLoading(true);
     setError(null);
     
-    const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) {
-      setError("No configuration found. Please set up your integrations.");
-      setIsLoading(false);
-      return;
-    }
-
-    const config: IntegrationConfig = JSON.parse(savedConfig);
-    const targetListId = overrideListId || selectedListId || config.clickUpListId;
-
     try {
-      if (activeSource === 'ClickUp') {
-        if (!config.clickUpToken || !targetListId) {
-          // If simply not selected yet, don't show error, just wait
-          if (!targetListId && availableLists.length > 0) {
-              // Wait for selection
-          } else if (!config.clickUpToken) {
-              setError("ClickUp is not fully configured. Please go to Integrations.");
-          }
-          setIssues([]);
+        const savedConfig = localStorage.getItem('bugsnap_config');
+        if (!savedConfig) {
+          setError("No configuration found. Please set up your integrations.");
+          setIsLoading(false);
           return;
         }
-        const tasks = await fetchClickUpTasks(targetListId, config.clickUpToken);
-        setIssues(tasks);
-      } 
-      else if (activeSource === 'Jira') {
-        if (!config.jiraUrl || !config.jiraToken) {
-          setError("Jira is not configured.");
-          setIssues([]);
-          return;
+
+        const config: IntegrationConfig = JSON.parse(savedConfig);
+        const targetListId = overrideListId || selectedListId || config.clickUpListId;
+
+        if (activeSource === 'ClickUp') {
+            if (!config.clickUpToken || !targetListId) {
+            // If simply not selected yet, don't show error, just wait
+            if (!targetListId && availableLists.length > 0) {
+                // Wait for selection
+            } else if (!config.clickUpToken) {
+                setError("ClickUp is not fully configured. Please go to Integrations.");
+            }
+            setIssues([]);
+            return;
+            }
+            const tasks = await fetchClickUpTasks(targetListId, config.clickUpToken);
+            setIssues(tasks);
+        } 
+        else if (activeSource === 'Jira') {
+            if (!config.jiraUrl || !config.jiraToken) {
+            setError("Jira is not configured.");
+            setIssues([]);
+            return;
+            }
+            setIssues([]); 
+            setError("Jira integration is configured but fetching is coming soon.");
         }
-        setIssues([]); 
-        setError("Jira integration is configured but fetching is coming soon.");
-      }
-      else if (activeSource === 'Slack') {
-         if (!config.slackToken || !config.slackChannel) {
-             setError("Slack is not configured.");
-             setIssues([]);
-             return;
-         }
-         const history = await fetchSlackHistory(config.slackToken, config.slackChannel);
-         setIssues(history);
-      }
-      
-      if (isRefresh) addToast("Dashboard updated", 'success');
+        else if (activeSource === 'Slack') {
+            if (!config.slackToken || !config.slackChannel) {
+                setError("Slack is not configured.");
+                setIssues([]);
+                return;
+            }
+            const history = await fetchSlackHistory(config.slackToken, config.slackChannel);
+            setIssues(history);
+        }
+        
+        if (isRefresh) addToast("Dashboard updated", 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       setError(msg);
@@ -266,26 +273,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   const handleShareDashboardToSlack = async () => {
      setIsSharing(true);
      
-     const savedConfig = localStorage.getItem('bugsnap_config');
-     if (!savedConfig) {
-         setIntegrationModalSource('Slack');
-         setIsSharing(false);
-         return;
-     }
-     const config: IntegrationConfig = JSON.parse(savedConfig);
-
-     if (!config.slackToken || !config.slackChannel) {
-         setIntegrationModalSource('Slack');
-         setIsSharing(false);
-         return;
-     }
-
-     addToast("Posting summary to Slack...", 'info');
-
      try {
-         const summary = generateDashboardSummary(metrics);
-         await postSlackMessage(config.slackToken, config.slackChannel, summary);
-         addToast("Dashboard summary shared to Slack!", 'success');
+        const savedConfig = localStorage.getItem('bugsnap_config');
+        if (!savedConfig) {
+            setIntegrationModalSource('Slack');
+            setIsSharing(false);
+            return;
+        }
+        const config: IntegrationConfig = JSON.parse(savedConfig);
+
+        if (!config.slackToken || !config.slackChannel) {
+            setIntegrationModalSource('Slack');
+            setIsSharing(false);
+            return;
+        }
+
+        addToast("Posting summary to Slack...", 'info');
+
+        const summary = generateDashboardSummary(metrics);
+        await postSlackMessage(config.slackToken, config.slackChannel, summary);
+        addToast("Dashboard summary shared to Slack!", 'success');
      } catch (e) {
          console.error(e);
          const msg = e instanceof Error ? e.message : "Failed to post to Slack";
@@ -306,16 +313,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   };
 
   const handleSaveIntegration = (newConfig: IntegrationConfig) => {
-      const saved = localStorage.getItem('bugsnap_config');
-      const current = saved ? JSON.parse(saved) : {};
-      const updated = { ...current, ...newConfig };
-      localStorage.setItem('bugsnap_config', JSON.stringify(updated));
-      
-      addToast(`${integrationModalSource} connected!`, 'success');
-      setIntegrationModalSource(null);
-      
-      // If we just connected ClickUp, reload
-      if (integrationModalSource === 'ClickUp') loadData(true);
+      try {
+        const saved = localStorage.getItem('bugsnap_config');
+        const current = saved ? JSON.parse(saved) : {};
+        const updated = { ...current, ...newConfig };
+        localStorage.setItem('bugsnap_config', JSON.stringify(updated));
+        
+        addToast(`${integrationModalSource} connected!`, 'success');
+        setIntegrationModalSource(null);
+        
+        // If we just connected ClickUp, reload
+        if (integrationModalSource === 'ClickUp') loadData(true);
+      } catch (e) {
+          addToast("Failed to save configuration", "error");
+      }
   };
 
   // Sort Handler
@@ -336,8 +347,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         source={integrationModalSource}
         onClose={() => setIntegrationModalSource(null)}
         currentConfig={(() => {
-            const saved = localStorage.getItem('bugsnap_config');
-            return saved ? JSON.parse(saved) : {};
+            try {
+                const saved = localStorage.getItem('bugsnap_config');
+                return saved ? JSON.parse(saved) : {};
+            } catch (e) { return {}; }
         })()}
         onSave={handleSaveIntegration}
       />
