@@ -609,7 +609,8 @@ const App: React.FC = () => {
 
   const handleFloatingCaptureSession = async () => {
       if (pipWindowRef.current) {
-          addToast("Floating widget is already active", "info");
+          // Focus the existing window instead of showing an error
+          pipWindowRef.current.focus();
           return;
       }
 
