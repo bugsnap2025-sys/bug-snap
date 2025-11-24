@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ClickUpExportMode, Slide, ClickUpHierarchyList, IntegrationConfig } from '../types';
 import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight } from 'lucide-react';
@@ -55,13 +54,15 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
         } else {
             setIsConfigured(false);
         }
-
-        // 2. Generate AI Metadata
-        if (slides.length > 0) {
-            generateAIContent();
-        }
     }
-  }, [isOpen, activeSlideId]); 
+  }, [isOpen]); 
+
+  // Separate effect for AI generation that triggers on open OR mode change
+  useEffect(() => {
+    if (isOpen && slides.length > 0) {
+        generateAIContent();
+    }
+  }, [isOpen, mode, activeSlideId]);
 
   const fetchLists = async (token: string) => {
       setIsLoadingLists(true);
@@ -88,12 +89,16 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   const generateAIContent = async () => {
       setIsGeneratingAI(true);
       try {
-          const targetSlide = mode === 'current' ? activeSlide : slides[0]; 
+          // Determine context based on mode
+          const isSingle = mode === 'current';
+          const targetSlide = activeSlide; 
           
-          const meta = await generateAIReportMetadata(
-              mode === 'current' ? targetSlide.name : `Bug Report (${slides.length} slides)`,
-              mode === 'current' ? targetSlide.annotations : slides.flatMap(s => s.annotations)
-          );
+          const slideName = isSingle ? targetSlide.name : `Bug Report Batch (${slides.length} slides)`;
+          const targetAnnotations = isSingle 
+             ? targetSlide.annotations 
+             : slides.flatMap(s => s.annotations);
+          
+          const meta = await generateAIReportMetadata(slideName, targetAnnotations);
           
           setTitle(meta.title);
           setDescription(meta.description);

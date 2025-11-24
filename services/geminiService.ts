@@ -83,15 +83,29 @@ export const generateAIReportMetadata = async (
 
   try {
     const modelId = 'gemini-2.5-flash';
+    
+    // If no annotations, provide generic context
+    if (!annotations || annotations.length === 0) {
+        return { 
+            title: slideName || "Bug Report", 
+            description: "No specific annotations provided. Please review the attached screenshot." 
+        };
+    }
+
     const annotationsList = annotations.map((a: any, i: number) => `Issue ${i + 1}: ${a.comment}`).join('\n');
     
     const prompt = `
-      Analyze the following bug report observations and generate a concise Title and a detailed Description.
-      
-      Context: User is reporting a UI/UX bug on a web application.
-      Slide Name: ${slideName}
-      Observations:
+      You are an expert QA Lead. 
+      Analyze the following list of bug observations/annotations from a screenshot and generate a concise Task Title and Description.
+
+      Input Context (User Comments):
       ${annotationsList}
+
+      Requirements:
+      1. Title: Short, descriptive, and punchy (max 60 chars). Focus on the main issue found in the comments.
+      2. Description: A professional summary. Group related observations if necessary. Use Markdown.
+
+      Return JSON.
     `;
 
     const response = await ai.models.generateContent({
@@ -103,7 +117,7 @@ export const generateAIReportMetadata = async (
           type: Type.OBJECT,
           properties: {
             title: { type: Type.STRING, description: "A short, descriptive summary (max 10 words)" },
-            description: { type: Type.STRING, description: "A structured markdown description including a summary of issues." }
+            description: { type: Type.STRING, description: "A structured markdown description." }
           },
           required: ["title", "description"]
         }
