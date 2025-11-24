@@ -40,6 +40,10 @@ export const validateClickUpToken = async (token: string): Promise<boolean> => {
         return response.ok;
     } catch (error) {
         console.error("Token validation failed:", error);
+        // Bubble up specific proxy requirement errors
+        if (error instanceof Error && error.message === 'corsdemo_required') {
+            throw error;
+        }
         return false;
     }
 };

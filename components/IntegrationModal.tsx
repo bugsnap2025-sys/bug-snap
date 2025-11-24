@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2 } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
@@ -22,12 +22,14 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
 }) => {
   const [formData, setFormData] = useState<Partial<IntegrationConfig>>({});
   const [error, setError] = useState<string | null>(null);
+  const [isCorsDemoError, setIsCorsDemoError] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   
   useEffect(() => {
     if (isOpen && source) {
       setFormData(currentConfig);
       setError(null);
+      setIsCorsDemoError(false);
       setIsValidating(false);
     }
   }, [isOpen, source, currentConfig]);
@@ -37,60 +39,62 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
   const handleChange = (key: keyof IntegrationConfig, value: string) => {
     setFormData(prev => ({ ...prev, [key]: value }));
     setError(null);
+    setIsCorsDemoError(false);
   };
 
   const handleSave = async () => {
     let newConfig = { ...formData };
     
     setIsValidating(true);
+    setError(null);
+    setIsCorsDemoError(false);
 
-    if (source === 'ClickUp') {
-        if (!newConfig.clickUpToken) {
-            setError("Personal Access Token is required.");
-            setIsValidating(false);
-            return;
+    try {
+        if (source === 'ClickUp') {
+            if (!newConfig.clickUpToken) {
+                throw new Error("Personal Access Token is required.");
+            }
+            
+            // Validate Token
+            const isValid = await validateClickUpToken(newConfig.clickUpToken);
+            if (!isValid) {
+                throw new Error("Invalid Personal Access Token. Authentication failed.");
+            }
+
+            // List selection handled elsewhere
+        } 
+        else if (source === 'Slack') {
+            if (!newConfig.slackToken || !newConfig.slackToken.startsWith('xoxb-')) {
+                throw new Error("Invalid Bot Token. It must start with 'xoxb-'.");
+            }
+            if (!newConfig.slackChannel) {
+                throw new Error("Channel ID is required.");
+            }
+            const extractedId = extractChannelId(newConfig.slackChannel);
+            if (!extractedId) {
+                 throw new Error("Invalid Slack Channel ID.");
+            }
+            newConfig.slackChannel = extractedId;
         }
-        
-        // Validate Token
-        const isValid = await validateClickUpToken(newConfig.clickUpToken);
-        if (!isValid) {
-            setError("Invalid Personal Access Token. Authentication failed.");
-            setIsValidating(false);
-            return;
+        else if (source === 'Jira') {
+            if (!newConfig.jiraUrl || !newConfig.jiraToken || !newConfig.jiraEmail) {
+                 throw new Error("All fields are required for Jira.");
+            }
         }
 
-        // List selection is now handled in the Dashboard/Export modal
-    } 
-    else if (source === 'Slack') {
-        if (!newConfig.slackToken || !newConfig.slackToken.startsWith('xoxb-')) {
-            setError("Invalid Bot Token. It must start with 'xoxb-'.");
-            setIsValidating(false);
-            return;
+        setIsValidating(false);
+        onSave(newConfig as IntegrationConfig);
+        onClose();
+
+    } catch (err: any) {
+        setIsValidating(false);
+        if (err.message === 'corsdemo_required') {
+            setIsCorsDemoError(true);
+            setError("Browser Proxy requires one-time activation.");
+        } else {
+            setError(err.message || "Validation failed");
         }
-        if (!newConfig.slackChannel) {
-            setError("Channel ID is required.");
-            setIsValidating(false);
-            return;
-        }
-        const extractedId = extractChannelId(newConfig.slackChannel);
-        if (!extractedId) {
-             setError("Invalid Slack Channel ID.");
-             setIsValidating(false);
-             return;
-        }
-        newConfig.slackChannel = extractedId;
     }
-    else if (source === 'Jira') {
-        if (!newConfig.jiraUrl || !newConfig.jiraToken || !newConfig.jiraEmail) {
-             setError("All fields are required for Jira.");
-             setIsValidating(false);
-             return;
-        }
-    }
-
-    setIsValidating(false);
-    onSave(newConfig as IntegrationConfig);
-    onClose();
   };
 
   const handleDisconnect = () => {
@@ -208,9 +212,21 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
 
         <div className="p-6">
             {error && (
-                <div className="mb-4 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-3 rounded-lg text-sm flex items-start gap-2">
-                    <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                    <span>{error}</span>
+                <div className="mb-4 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-3 rounded-lg text-sm flex flex-col gap-2">
+                    <div className="flex items-start gap-2">
+                        <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                        <span>{error}</span>
+                    </div>
+                    {isCorsDemoError && (
+                         <a 
+                            href="https://cors-anywhere.herokuapp.com/corsdemo" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="ml-6 text-xs underline font-bold hover:text-red-800 dark:hover:text-red-200 flex items-center gap-1"
+                         >
+                            <ExternalLink size={12} /> Click here to Unlock Proxy
+                         </a>
+                    )}
                 </div>
             )}
             

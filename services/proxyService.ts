@@ -35,6 +35,7 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
 
 export const fetchWithProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
   let lastError: any;
+  let failureResponse: Response | null = null;
 
   for (const provider of PROXY_PROVIDERS) {
     try {
@@ -44,7 +45,6 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
       const headers = new Headers(options.headers || {});
       
       // Only add x-requested-with if the specific proxy requires it.
-      // Adding it to others (like corsproxy.io) can actually cause Preflight 403 errors.
       if (provider.requiresHeaders) {
         headers.set('x-requested-with', 'XMLHttpRequest');
       }
@@ -54,29 +54,41 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
         headers
       });
       
-      if (!response.ok) {
-         // If the proxy itself returns an error (not the target API), throw to trigger fallback
-         // cors-anywhere returns 403 if not activated
-         if (response.status === 403 && provider.name === 'cors-anywhere') {
-             const text = await response.text();
-             if (text.includes('See /corsdemo')) {
-                 throw new Error('corsdemo_required'); 
-             }
+      // If success, return immediately
+      if (response.ok) {
+        return response;
+      }
+
+      // Handle specific Cors-Anywhere lock (Status 403 with specific body)
+      if (response.status === 403 && provider.name === 'cors-anywhere') {
+         const text = await response.clone().text();
+         if (text.includes('See /corsdemo')) {
+             throw new Error('corsdemo_required'); 
          }
       }
 
-      return response;
+      // If we get here, it's a non-200 response (e.g. 401, 500). 
+      // It COULD be the API rejecting a valid request, OR the proxy malfunctioning/stripping headers.
+      // We save this response as a candidate for the final result, but we CONTINUE to the next proxy to be safe.
+      failureResponse = response;
+      console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next provider...`);
       
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`Proxy ${provider.name} failed:`, err);
-      lastError = err;
       
-      // If we hit the specific cors-anywhere verification error, stop trying other proxies and bubble it up
-      // so the UI can show the "Unlock" button.
-      if (err instanceof Error && err.message === 'corsdemo_required') {
-          throw new Error(`ClickUp API Error: 403 - See /corsdemo for more info`);
+      // If it's the specific lock error, stop trying and throw immediately to prompt user
+      if (err.message === 'corsdemo_required') {
+          throw new Error(`corsdemo_required`);
       }
+      
+      lastError = err;
     }
+  }
+
+  // If we exhausted all proxies and have a failure response (e.g. 401 from the last proxy), return it.
+  // This means the token is likely genuinely invalid, or the API is down.
+  if (failureResponse) {
+      return failureResponse;
   }
 
   throw new Error(`Network Error: Unable to connect via any proxy. (${lastError?.message || ''})`);
