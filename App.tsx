@@ -675,6 +675,17 @@ const App: React.FC = () => {
       }
   };
 
+  // Wrapper to handle Capture Click - Decides between Floating or Standard Capture
+  const handleCaptureClick = async () => {
+    // If in Picture-in-Picture supported browser and NOT in iframe (handled inside function), try PIP
+    if ("documentPictureInPicture" in window) {
+      await handleFloatingCaptureSession();
+    } else {
+      // Fallback for browsers like Firefox or if user prefers standard
+      await handleSnapFromStream();
+    }
+  };
+
   const NavButton = ({ active, onClick, icon: Icon, children }: any) => (
     <button
       onClick={onClick}
@@ -842,7 +853,7 @@ const App: React.FC = () => {
 
                {view === AppView.DASHBOARD && (
                   <Dashboard 
-                    onCapture={handleSnapFromStream} 
+                    onCapture={handleCaptureClick} 
                     onRecord={handleVideoRecord} 
                     onUpload={() => fileInputRef.current?.click()}
                   />
@@ -863,7 +874,7 @@ const App: React.FC = () => {
                        }
                    }}
                    onAddSlide={() => fileInputRef.current?.click()}
-                   onCaptureScreen={handleSnapFromStream}
+                   onCaptureScreen={handleCaptureClick}
                    onRecordVideo={handleVideoRecord}
                    onClose={() => setView(AppView.DASHBOARD)}
                  />
