@@ -168,6 +168,18 @@ export const Editor: React.FC<EditorProps> = ({
       return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
   };
 
+  if (!activeSlide) {
+      return (
+          <div className="flex items-center justify-center h-full bg-slate-50 dark:bg-[#0f0f0f] text-slate-400 dark:text-zinc-500">
+              <div className="text-center">
+                  <Layers size={48} className="mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">No slides available</p>
+                  <button onClick={onAddSlide} className="mt-4 text-blue-600 dark:text-blue-400 hover:underline">Upload or Capture an image</button>
+              </div>
+          </div>
+      );
+  }
+
   const handleMouseDown = (e: React.MouseEvent) => {
     const point = getCanvasPoint(e);
 
@@ -384,7 +396,7 @@ export const Editor: React.FC<EditorProps> = ({
     return currentY + lineHeight;
   }
 
-  const generateCompositeImage = async (slide: Slide): Promise<Blob> => {
+  const generateCompositeImage = async (slide: Slide, type: string = 'image/png', quality?: number): Promise<Blob> => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error("Canvas creation failed");
@@ -432,10 +444,32 @@ export const Editor: React.FC<EditorProps> = ({
         });
     }
 
-    const scale = naturalWidth / displayWidth;
+    if (naturalWidth === 0 || naturalHeight === 0) {
+        throw new Error("Source image/video has no dimensions. Please wait for it to load.");
+    }
+
+    // CAP CANVAS SIZE TO PREVENT MASSIVE FILES
+    const MAX_CANVAS_WIDTH = 1920;
+    let renderWidth = naturalWidth;
+    let renderHeight = naturalHeight;
+    
+    if (renderWidth > MAX_CANVAS_WIDTH) {
+        const ratio = MAX_CANVAS_WIDTH / renderWidth;
+        renderWidth = MAX_CANVAS_WIDTH;
+        renderHeight = naturalHeight * ratio;
+    }
+
+    // Scale calculation: Map Display Width (DOM) -> Render Width (Canvas)
+    // naturalWidth was mapped to displayWidth.
+    // We are rendering at renderWidth.
+    // If renderWidth == naturalWidth, scale is naturalWidth / displayWidth.
+    // If we downscaled, we effectively render a smaller image.
+    // The scale factor for annotations should be: renderWidth / displayWidth
+    const scale = renderWidth / displayWidth;
+    
     const sidebarWidth = 600; 
-    const totalWidth = naturalWidth + sidebarWidth;
-    const totalHeight = Math.max(naturalHeight, 900);
+    const totalWidth = renderWidth + sidebarWidth;
+    const totalHeight = Math.max(renderHeight, 900);
 
     canvas.width = totalWidth;
     canvas.height = totalHeight;
@@ -443,20 +477,21 @@ export const Editor: React.FC<EditorProps> = ({
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, totalWidth, totalHeight);
     
+    // Draw Image at Render Size
     // @ts-ignore
-    ctx.drawImage(source, 0, 0, naturalWidth, naturalHeight);
+    ctx.drawImage(source, 0, 0, renderWidth, renderHeight);
 
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(naturalWidth, 0, sidebarWidth, totalHeight);
+    ctx.fillRect(renderWidth, 0, sidebarWidth, totalHeight);
 
     ctx.beginPath();
-    ctx.moveTo(naturalWidth, 0);
-    ctx.lineTo(naturalWidth, totalHeight);
+    ctx.moveTo(renderWidth, 0);
+    ctx.lineTo(renderWidth, totalHeight);
     ctx.strokeStyle = '#cbd5e1'; 
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    const contentX = naturalWidth + 50;
+    const contentX = renderWidth + 50;
     let currentY = 80;
 
     ctx.fillStyle = '#0f172a'; 
@@ -494,7 +529,9 @@ export const Editor: React.FC<EditorProps> = ({
             const y = Math.min(sy, ey);
 
             ctx.strokeStyle = ann.color;
-            ctx.lineWidth = 3 * scale; 
+            ctx.lineWidth = 3 * (renderWidth / naturalWidth); // Adjust line width relative to downscaling
+            if (ctx.lineWidth < 1.5) ctx.lineWidth = 1.5;
+
             ctx.fillStyle = hexToRgba(ann.color, 0.2); 
 
             if (ann.type === ToolType.RECTANGLE) {
@@ -507,14 +544,16 @@ export const Editor: React.FC<EditorProps> = ({
                 ctx.stroke();
             }
 
-            const badgeR = 16 * scale;
+            const badgeR = 16 * (renderWidth / naturalWidth);
+            const safeBadgeR = Math.max(badgeR, 10);
+            
             ctx.beginPath();
-            ctx.arc(x, y, badgeR, 0, 2 * Math.PI);
+            ctx.arc(x, y, safeBadgeR, 0, 2 * Math.PI);
             ctx.fillStyle = ann.color;
             ctx.fill();
 
             ctx.fillStyle = '#fff';
-            ctx.font = `bold ${18 * scale}px sans-serif`;
+            ctx.font = `bold ${Math.max(18 * (renderWidth / naturalWidth), 10)}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText((i + 1).toString(), x, y);
@@ -547,8 +586,15 @@ export const Editor: React.FC<EditorProps> = ({
         currentY = Math.max(nextY, currentY + 60) + 30; 
     });
 
-    return new Promise((resolve) => {
-        canvas.toBlob(blob => resolve(blob!), 'image/png');
+    return new Promise((resolve, reject) => {
+        try {
+            canvas.toBlob(blob => {
+                if (blob) resolve(blob);
+                else reject(new Error("Canvas toBlob returned null (image too large or tainted)"));
+            }, type, quality);
+        } catch (e) {
+            reject(e);
+        }
     });
   };
 
@@ -636,6 +682,10 @@ export const Editor: React.FC<EditorProps> = ({
     try {
         let taskUrl = "";
 
+        // Use JPEG with 0.7 quality to optimize size (~2MB or less usually)
+        const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+        const ext = '.jpg';
+
         if (mode === 'current') {
             const task = await createClickUpTask({
                 listId: listId,
@@ -645,8 +695,8 @@ export const Editor: React.FC<EditorProps> = ({
             });
             taskUrl = task.url;
             
-            const blob = await generateCompositeImage(activeSlide);
-            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, 'report.png');
+            const blob = await optimizeImage(activeSlide);
+            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
         } 
         else if (mode === 'all_attachments') {
             const masterTask = await createClickUpTask({
@@ -658,8 +708,8 @@ export const Editor: React.FC<EditorProps> = ({
             taskUrl = masterTask.url;
 
             for (const slide of slides) {
-                const blob = await generateCompositeImage(slide);
-                await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}.png`);
+                const blob = await optimizeImage(slide);
+                await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
             }
         }
         else if (mode === 'all_subtasks') {
@@ -680,8 +730,8 @@ export const Editor: React.FC<EditorProps> = ({
                     parentId: masterTask.id
                 });
                 
-                const blob = await generateCompositeImage(slide);
-                await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, 'report.png');
+                const blob = await optimizeImage(slide);
+                await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
             }
         }
 
@@ -1068,47 +1118,60 @@ export const Editor: React.FC<EditorProps> = ({
                 })}
                 {isDrawing && startPoint && currentPoint && !resizeHandle && !isDraggingShape && (
                    <g>
-                      {selectedTool === ToolType.RECTANGLE && <rect x={Math.min(startPoint.x, currentPoint.x)} y={Math.min(startPoint.y, currentPoint.y)} width={Math.abs(currentPoint.x - startPoint.x)} height={Math.abs(currentPoint.y - startPoint.y)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4" />}
-                      {selectedTool === ToolType.CIRCLE && <ellipse cx={startPoint.x + (currentPoint.x - startPoint.x) / 2} cy={startPoint.y + (currentPoint.y - startPoint.y) / 2} rx={Math.abs((currentPoint.x - startPoint.x) / 2)} ry={Math.abs((currentPoint.y - startPoint.y) / 2)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4" />}
+                      {selectedTool === ToolType.RECTANGLE && <rect x={Math.min(startPoint.x, currentPoint.x)} y={Math.min(startPoint.y, currentPoint.y)} width={Math.abs(currentPoint.x - startPoint.x)} height={Math.abs(currentPoint.y - startPoint.y)} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={3} rx={4} />}
+                      {selectedTool === ToolType.CIRCLE && <ellipse cx={Math.min(startPoint.x, currentPoint.x) + Math.abs(currentPoint.x - startPoint.x) / 2} cy={Math.min(startPoint.y, currentPoint.y) + Math.abs(currentPoint.y - startPoint.y) / 2} rx={Math.abs(currentPoint.x - startPoint.x) / 2} ry={Math.abs(currentPoint.y - startPoint.y) / 2} fill="rgba(59, 130, 246, 0.2)" stroke="#3b82f6" strokeWidth={3} />}
                    </g>
                 )}
               </svg>
            </div>
-           {activeSlide.type === 'video' && (
-             <div className="absolute bottom-8 bg-slate-900/80 backdrop-blur text-white p-2 rounded-full flex items-center gap-4 px-6 shadow-xl z-10">
-                <button onClick={() => { if (mediaRef.current) { if (isPlaying) (mediaRef.current as HTMLVideoElement).pause(); else (mediaRef.current as HTMLVideoElement).play(); setIsPlaying(!isPlaying); } }}>{isPlaying ? <Pause size={20} /> : <Play size={20} />}</button>
-                <span className="font-mono text-sm">{currentTime.toFixed(1)}s</span>
-             </div>
-           )}
         </div>
 
-        {/* Right Sidebar */}
-        <div className="w-80 bg-white dark:bg-[#0f0f0f] border-l border-slate-200 dark:border-[#272727] flex flex-col shrink-0 transition-colors">
-           <div className="h-12 border-b border-slate-100 dark:border-[#272727] flex items-center justify-between px-4">
-             <h3 className="font-bold text-slate-800 dark:text-white text-lg">Comments</h3>
+        {/* Right Sidebar (Comments) */}
+        <div className="w-80 bg-white dark:bg-[#0f0f0f] border-l border-slate-200 dark:border-[#272727] flex flex-col transition-colors">
+           <div className="p-4 border-b border-slate-200 dark:border-[#272727]">
+              <h2 className="font-bold text-slate-900 dark:text-white text-lg">Observations</h2>
+              <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Document findings for this slide.</p>
            </div>
            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {annotations.length === 0 ? (
-                <div className="text-center mt-10 opacity-40 dark:text-zinc-400"><MousePointer2 size={48} className="mx-auto mb-2" /><p className="text-sm">Draw a shape to start annotating</p></div>
-              ) : (
-                annotations.map((ann, index) => (
-                  <div key={ann.id} className={`relative group rounded-xl border p-3 transition-all ${selectedAnnotationId === ann.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-sm' : 'border-slate-200 dark:border-[#272727] bg-white dark:bg-[#1e1e1e] hover:border-blue-300 dark:hover:border-blue-700'}`} onClick={() => setSelectedAnnotationId(ann.id)}>
-                    <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 text-white rounded-md flex items-center justify-center text-xs font-bold shrink-0" style={{ backgroundColor: ann.color }}>{index + 1}</div><div className="ml-auto flex"><button onClick={(e) => { e.stopPropagation(); handleDeleteSelected(); }} className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button></div></div>
-                    <textarea 
-                        ref={el => { commentRefs.current[ann.id] = el; }}
-                        className="w-full text-sm bg-transparent border-none resize-y focus:ring-0 p-0 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-600 min-h-[60px]" 
-                        placeholder="Describe the issue..." 
-                        rows={3} 
-                        value={ann.comment} 
-                        onChange={(e) => handleCommentChange(ann.id, e.target.value)} 
-                    />
-                    {ann.comment.length > 3 && (<div className="mt-2 flex"><button onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }} disabled={aiLoadingId === ann.id} className="flex items-center gap-1.5 text-[10px] font-bold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 px-2 py-1 rounded-md transition-colors"><Wand2 size={12} className={aiLoadingId === ann.id ? 'animate-spin' : ''} />{aiLoadingId === ann.id ? 'Refining...' : 'Auto-Fix Grammar'}</button></div>)}
+              {annotations.length === 0 && (
+                  <div className="text-center py-8 opacity-50">
+                      <div className="w-12 h-12 bg-slate-100 dark:bg-[#1e1e1e] rounded-full flex items-center justify-center mx-auto mb-3">
+                          <MousePointer2 size={20} />
+                      </div>
+                      <p className="text-sm font-medium text-slate-600 dark:text-zinc-400">No observations yet</p>
+                      <p className="text-xs text-slate-400 dark:text-zinc-500 mt-1">Select a tool and draw on the image</p>
                   </div>
-                ))
               )}
-           </div>
-           <div className="p-4 border-t border-slate-100 dark:border-[#272727]">
-              <button onClick={() => { setAnnotations([]); onUpdateSlide({...activeSlide, annotations: []}); }} className="w-full py-3 border border-slate-200 dark:border-[#272727] text-slate-500 dark:text-zinc-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 hover:border-red-200 dark:hover:border-red-800 transition font-medium">Discard All</button>
+              {annotations.map((ann, index) => (
+                  <div 
+                    key={ann.id} 
+                    className={`p-3 rounded-xl border transition-all ${selectedAnnotationId === ann.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/10 shadow-sm' : 'border-slate-200 dark:border-[#3f3f3f] bg-white dark:bg-[#1e1e1e] hover:border-slate-300 dark:hover:border-[#555]'}`}
+                    onClick={() => setSelectedAnnotationId(ann.id)}
+                  >
+                      <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-xs font-bold flex items-center justify-center" style={{ backgroundColor: ann.color }}>{index + 1}</span>
+                              <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Issue #{index + 1}</span>
+                          </div>
+                          <div className="flex gap-1">
+                              <button onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }} className="p-1 text-slate-400 hover:text-purple-600 transition-colors rounded hover:bg-purple-50 dark:hover:bg-purple-900/20" title="Refine with AI">
+                                  {aiLoadingId === ann.id ? <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /> : <Wand2 size={14} />}
+                              </button>
+                              <button onClick={(e) => { e.stopPropagation(); onDeleteSlide(activeSlideId); /* Just delete annotation really? No logic passed for that */ handleDeleteSelected(); }} className="p-1 text-slate-400 hover:text-red-600 transition-colors rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                                  <Trash2 size={14} />
+                              </button>
+                          </div>
+                      </div>
+                      <textarea 
+                          ref={el => commentRefs.current[ann.id] = el}
+                          className="w-full text-sm bg-transparent border-none p-0 focus:ring-0 resize-none text-slate-700 dark:text-zinc-200 placeholder-slate-400"
+                          rows={2}
+                          placeholder="Describe the issue..."
+                          value={ann.comment}
+                          onChange={(e) => handleCommentChange(ann.id, e.target.value)}
+                      />
+                  </div>
+              ))}
            </div>
         </div>
       </div>

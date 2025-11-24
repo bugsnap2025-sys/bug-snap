@@ -1,13 +1,11 @@
-import { GoogleGenAI } from "@google/genai";
+
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize Gemini Client
-// Using the provided fallback key safely. 
-// In a real Vite env, use import.meta.env.VITE_API_KEY, but hardcoding provided key for stability.
-const apiKey = 'AIzaSyBOOzzdxkWdA-Oqr2HPS-ejS2q2Ykf168w'; 
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
-  if (!apiKey) {
+  if (!process.env.API_KEY) {
     console.warn("Gemini API Key missing. Returning raw text.");
     return rawText; 
   }
@@ -37,11 +35,11 @@ export const refineBugReport = async (rawText: string, context: string = "genera
 };
 
 export const generateMarkdownReport = async (slideTitle: string, annotations: any[]): Promise<string> => {
-  if (!apiKey) return "";
+  if (!process.env.API_KEY) return "";
 
   try {
     const modelId = 'gemini-2.5-flash';
-    const annotationsList = annotations.map((a, i) => `${i + 1}. ${a.comment}`).join('\n');
+    const annotationsList = annotations.map((a: any, i: number) => `${i + 1}. ${a.comment}`).join('\n');
     
     const prompt = `
       Create a structured Markdown bug report based on these details:
@@ -68,13 +66,13 @@ export const generateAIReportMetadata = async (
   slideName: string, 
   annotations: any[]
 ): Promise<{ title: string, description: string }> => {
-  if (!apiKey) {
+  if (!process.env.API_KEY) {
     return { title: slideName, description: "" };
   }
 
   try {
     const modelId = 'gemini-2.5-flash';
-    const annotationsList = annotations.map((a, i) => `Issue ${i + 1}: ${a.comment}`).join('\n');
+    const annotationsList = annotations.map((a: any, i: number) => `Issue ${i + 1}: ${a.comment}`).join('\n');
     
     const prompt = `
       Analyze the following bug report observations and generate a concise Title and a detailed Description.
@@ -83,19 +81,21 @@ export const generateAIReportMetadata = async (
       Slide Name: ${slideName}
       Observations:
       ${annotationsList}
-      
-      Output strictly in JSON format:
-      {
-        "title": "A short, descriptive summary (max 10 words)",
-        "description": "A structured markdown description including a summary of issues."
-      }
     `;
 
     const response = await ai.models.generateContent({
       model: modelId,
       contents: prompt,
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "A short, descriptive summary (max 10 words)" },
+            description: { type: Type.STRING, description: "A structured markdown description including a summary of issues." }
+          },
+          required: ["title", "description"]
+        }
       }
     });
 
@@ -110,7 +110,7 @@ export const generateAIReportMetadata = async (
     // Fallback
     return { 
         title: slideName, 
-        description: annotations.map((a, i) => `${i + 1}. ${a.comment}`).join('\n') 
+        description: annotations.map((a: any, i: number) => `${i + 1}. ${a.comment}`).join('\n') 
     };
   }
 };

@@ -191,7 +191,7 @@ export const createClickUpTask = async ({ listId, token, title, description, par
 
     return await response.json();
   } catch (error) {
-    console.error("Task creation failed:", error);
+    console.error("ClickUp Task Creation Failed:", error);
     throw error;
   }
 };
@@ -207,119 +207,99 @@ export const uploadClickUpAttachment = async (taskId: string, token: string, fil
       method: 'POST',
       headers: {
         'Authorization': token,
+        // Content-Type is automatic with FormData
       },
       body: formData
     });
 
     if (!response.ok) {
-      throw new Error(`Attachment Upload Failed: ${response.status}`);
+        const text = await response.text();
+        
+        // Specific handling for storage limits
+        if (text.includes("Over allocated storage")) {
+            const sizeInMB = (fileBlob.size / (1024 * 1024)).toFixed(2);
+            throw new Error(`ClickUp Workspace Storage Full. This file is ${sizeInMB}MB. Please delete old files or upgrade plan.`);
+        }
+
+        throw new Error(`Attachment Upload Failed: ${response.status} - ${text}`);
     }
 
     return await response.json();
   } catch (error) {
-    console.error("Attachment upload failed:", error);
+    console.error("ClickUp Attachment Upload Failed:", error);
     throw error;
   }
 };
 
-export const fetchClickUpTasks = async (listId: string, token: string): Promise<ReportedIssue[]> => {
-  const url = `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&order_by=updated&reverse=true&page=0`;
-
-  try {
-    const response = await fetchWithProxy(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': token
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch tasks: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const allTasks = data.tasks || [];
-
-    // --- FILTER LOGIC ---
-    // 1. Tags include "BugSnap"
-    // 2. Title contains "[BugSnap]"
-    // 3. Description contains "Created using BugSnap"
-    // Show task if ANY condition matches.
-    const filteredTasks = allTasks.filter((t: any) => {
-        const hasTag = t.tags && t.tags.some((tag: any) => tag.name.toLowerCase() === 'bugsnap');
-        const hasTitlePrefix = t.name && t.name.includes('[BugSnap]');
-        const hasDescSuffix = t.description && t.description.includes('Created using BugSnap');
-        
-        return hasTag || hasTitlePrefix || hasDescSuffix;
-    });
-    
-    // Map ClickUp API response to ReportedIssue
-    return filteredTasks.map((t: any) => {
-      let priority: ReportedIssue['priority'] = 'None';
-      if (t.priority) {
-        const p = t.priority.priority; 
-        if (p === 'urgent') priority = 'Urgent';
-        else if (p === 'high') priority = 'High';
-        else if (p === 'normal') priority = 'Normal';
-        else if (p === 'low') priority = 'Low';
-      }
-
-      // Extract Tags as Modules
-      const tags = t.tags ? t.tags.map((tag: any) => tag.name) : [];
-      const module = tags.length > 0 ? tags.filter((tag: string) => tag.toLowerCase() !== 'bugsnap')[0] : 'General';
-
-      // Calc Resolution Time
-      let resolutionTime = undefined;
-      if (t.date_closed && t.date_created) {
-          const diffMs = parseInt(t.date_closed) - parseInt(t.date_created);
-          resolutionTime = parseFloat((diffMs / (1000 * 60 * 60)).toFixed(1)); // Hours
-      }
-
-      return {
-        id: t.id, 
-        title: t.name,
-        platform: 'ClickUp',
-        status: t.status?.status || 'Unknown',
-        statusColor: t.status?.color || '#ccc',
-        priority,
-        assignee: t.assignees?.[0]?.username,
-        date: new Date(parseInt(t.date_created)).toLocaleDateString(),
-        dueDate: t.due_date ? new Date(parseInt(t.due_date)).toLocaleDateString() : undefined,
-        url: t.url,
-        module: module || 'General',
-        reporter: t.creator?.username || 'Unknown',
-        resolutionTime,
-        tags
-      } as ReportedIssue;
-    });
-
-  } catch (error) {
-    console.error("Fetch ClickUp tasks failed:", error);
-    throw error;
-  }
-}
-
-// --- Markdown Helpers ---
-
 export const generateTaskDescription = (slide: Slide): string => {
-  let md = `## Observations for: ${truncate(slide.name, 100)}\n\n`;
+  let desc = `## Observations\n\n`;
   
   if (slide.annotations.length === 0) {
-    md += "_No specific annotations marked._\n";
+    desc += `_No specific annotations provided._\n`;
   } else {
-    slide.annotations.forEach((ann, idx) => {
-      const safeComment = truncate(ann.comment || "(No comment)", 500);
-      md += `**${idx + 1}.** ${safeComment}\n`;
+    slide.annotations.forEach((ann, i) => {
+      desc += `**${i + 1}.** ${ann.comment || 'No comment'}\n`;
     });
   }
-  return md;
+
+  desc += `\n\n---\n`;
+  desc += `**Metadata**\n`;
+  desc += `Captured: ${new Date(slide.createdAt).toLocaleString()}\n`;
+  desc += `Source: BugSnap`;
+  
+  return desc;
 };
 
 export const generateMasterDescription = (slides: Slide[]): string => {
-  return `## Bug Report Summary
-  
-  **Total Slides:** ${slides.length}
-  **Date:** ${new Date().toLocaleDateString()}
-  
-  See attached images/subtasks for details.`;
+  let desc = `# Bug Report Summary\n\n`;
+  desc += `Total Slides: ${slides.length}\n\n`;
+
+  slides.forEach((slide, i) => {
+      desc += `## Slide ${i + 1}: ${slide.name}\n`;
+      if (slide.annotations.length > 0) {
+          slide.annotations.forEach((ann, j) => {
+              desc += `- **Issue ${j + 1}:** ${ann.comment || 'No details'}\n`;
+          });
+      } else {
+          desc += `_No annotations._\n`;
+      }
+      desc += `\n`;
+  });
+
+  return desc;
 };
+
+export const fetchClickUpTasks = async (listId: string, token: string): Promise<ReportedIssue[]> => {
+    const url = `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&subtasks=true`;
+    
+    try {
+        const response = await fetchWithProxy(url, {
+            headers: { 'Authorization': token }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ClickUp tasks: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const tasks = data.tasks || [];
+        
+        return tasks.map((t: any) => ({
+            id: t.id,
+            title: t.name,
+            platform: 'ClickUp',
+            status: t.status?.status || 'Unknown',
+            statusColor: t.status?.color || '#ccc',
+            priority: t.priority?.priority ? capitalize(t.priority.priority) : 'None',
+            date: new Date(parseInt(t.date_created)).toLocaleDateString(),
+            assignee: t.assignees.length > 0 ? t.assignees[0].username : undefined,
+            url: t.url
+        }));
+
+    } catch (error) {
+        console.error("ClickUp Fetch Tasks Failed:", error);
+        throw error;
+    }
+};
+
+const capitalize = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
