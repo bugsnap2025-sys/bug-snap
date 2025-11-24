@@ -37,6 +37,7 @@ const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap
   const [flashing, setFlashing] = useState(false);
 
   const handleSnap = async () => {
+     if (isSnapping) return;
      // Trigger the snap action
      const success = await onSnap();
      
@@ -48,37 +49,42 @@ const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap
 
   return (
     <div 
-      className={`h-screen w-screen flex items-center justify-between bg-[#18181b] text-white overflow-hidden transition-opacity duration-150 px-4 select-none ${isSnapping ? 'opacity-0' : 'opacity-100'}`}
-      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+      className={`w-full h-full flex items-center justify-between bg-zinc-900 text-white overflow-hidden px-3 select-none`}
+      style={{ 
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        backgroundColor: '#18181b', // Immediate dark background
+        opacity: isSnapping ? 0 : 1,
+        transition: 'opacity 0.2s ease-in-out' // Fast fade out
+      }}
     >
         {/* Left: Counter Badge */}
         <div 
-            className="flex items-center gap-2 bg-zinc-800/80 px-3 py-1.5 rounded-full border border-zinc-700"
-            title={`${slideCount} screenshots captured`}
+            className="flex items-center gap-1.5 bg-zinc-800/80 px-2.5 py-1 rounded-full border border-zinc-700 shadow-sm"
+            style={{ minWidth: '40px' }}
         >
-           <div className={`w-2 h-2 rounded-full ${flashing ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`} />
-           <span className="font-mono font-bold text-sm tracking-tight leading-none">{slideCount}</span>
+           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${flashing ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`} />
+           <span className="font-mono font-bold text-xs leading-none text-zinc-200">{slideCount}</span>
         </div>
 
         {/* Center: Action Button */}
         <button 
              onClick={handleSnap}
              disabled={isSnapping}
-             className="flex-1 mx-3 bg-white hover:bg-zinc-200 text-black active:scale-95 transition-all h-10 rounded-lg font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
+             className="flex-1 mx-2 bg-white hover:bg-zinc-200 text-black active:scale-95 transition-all h-8 rounded-md font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 whitespace-nowrap"
              aria-label="Capture Screenshot"
         >
-             <Camera size={18} className="fill-current" />
+             <Camera size={14} className="fill-current" />
              <span>SNAP</span>
         </button>
            
         {/* Right: Close/Stop */}
         <button 
              onClick={onStop}
-             className="text-zinc-400 hover:text-red-400 hover:bg-red-900/30 p-2 rounded-lg transition-colors"
+             className="text-zinc-500 hover:text-red-400 hover:bg-red-900/20 p-1.5 rounded-md transition-colors"
              title="End Session"
              aria-label="End Session"
         >
-             <StopCircle size={22} />
+             <StopCircle size={18} />
         </button>
     </div>
   );
@@ -452,9 +458,8 @@ const App: React.FC = () => {
   const handleSnapFromStream = async (): Promise<boolean> => {
       try {
         setIsFloatingSnapping(true);
-        // CRITICAL: Delay to allow UI to fade out completely. 
-        // 150ms is safe for the opacity transition to finish.
-        await new Promise(r => setTimeout(r, 150));
+        // CRITICAL: Increased delay to 300ms to ensure UI is fully transparent before capture.
+        await new Promise(r => setTimeout(r, 300));
 
         // Use EXISTING stream (Persistent connection)
         let stream = mediaStreamRef.current;
@@ -559,549 +564,218 @@ const App: React.FC = () => {
 
   const handleFloatingCaptureSession = async () => {
       if (pipWindowRef.current) {
-          addToast("Floating widget is already active.", "info");
+          addToast("Floating widget is already active", "info");
           return;
       }
 
-      if (!window.documentPictureInPicture) {
-          addToast("Your browser does not support Floating Widgets (PIP). Try Chrome/Edge.", 'error');
-          // Fallback to simple screen capture if PIP is not available
-          handleScreenSnapshot('full');
+      if (!("documentPictureInPicture" in window)) {
+          addToast("Picture-in-Picture API not supported", "error");
           return;
       }
 
       try {
-          // 1. Request Stream FIRST (Persistent) to avoid repetitive popups
-          // We ask user to select "Entire Screen" once here.
-          addToast("Please select 'Entire Screen' to enable seamless snapping.", "info");
-          
-          const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: { displaySurface: "monitor" },
-            audio: false
-          });
-          mediaStreamRef.current = stream;
+          // Check if we are inside an iframe (stackblitz/codesandbox preview)
+          if (window.self !== window.top) {
+              setIsRestrictedModalOpen(true);
+              return;
+          }
 
-          // Handle user stopping stream via browser UI
-          stream.getVideoTracks()[0].onended = () => {
-             if (pipWindowRef.current) pipWindowRef.current.close();
-             mediaStreamRef.current = null;
-          };
-
-          // 2. Open PIP Window
-          // RESIZED: Smaller window for cleaner UI
           const pipWindow = await window.documentPictureInPicture.requestWindow({
-              width: 300,
-              height: 60,
+              width: 250, // Reduced size
+              height: 50, // Reduced size
           });
+          
           pipWindowRef.current = pipWindow;
 
-          // 3. Copy Styles (Tailwind)
-          Array.from(document.styleSheets).forEach((styleSheet) => {
-            try {
-              if (styleSheet.href) {
-                const link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.type = styleSheet.type;
-                link.media = typeof styleSheet.media === 'string' ? styleSheet.media : styleSheet.media.mediaText;
-                link.href = styleSheet.href;
-                pipWindow.document.head.appendChild(link);
-              } else if (styleSheet.cssRules) {
-                const style = document.createElement('style');
-                Array.from(styleSheet.cssRules).forEach((rule) => {
-                  style.appendChild(document.createTextNode(rule.cssText));
-                });
-                pipWindow.document.head.appendChild(style);
+          // Copy styles
+          [...document.styleSheets].forEach((styleSheet) => {
+              try {
+                  const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
+                  const style = document.createElement('style');
+                  style.textContent = cssRules;
+                  pipWindow.document.head.appendChild(style);
+              } catch (e) {
+                  const link = document.createElement('link');
+                  link.rel = 'stylesheet';
+                  link.type = styleSheet.type;
+                  link.media = styleSheet.media.mediaText;
+                  link.href = styleSheet.href || '';
+                  pipWindow.document.head.appendChild(link);
               }
-            } catch (e) {
-               const link = document.createElement('link');
-               link.rel = 'stylesheet';
-               link.href = "https://cdn.tailwindcss.com"; 
-               pipWindow.document.head.appendChild(link);
-            }
           });
-          
-          const twScript = document.createElement('script');
-          twScript.src = "https://cdn.tailwindcss.com";
-          pipWindow.document.head.appendChild(twScript);
 
-          // 4. Mount React Component
-          const root = ReactDOM.createRoot(pipWindow.document.body);
-          pipRootRef.current = root;
+          // Critical: Set background immediately to prevent white flash
+          pipWindow.document.body.style.backgroundColor = '#18181b';
+          pipWindow.document.body.style.margin = '0';
+          pipWindow.document.body.style.overflow = 'hidden';
+
+          // Create root
+          const container = pipWindow.document.createElement('div');
+          container.style.height = '100%';
+          pipWindow.document.body.appendChild(container);
+          
+          pipRootRef.current = ReactDOM.createRoot(container);
           renderPipContent();
 
-          // 5. Cleanup on close
           pipWindow.addEventListener('pagehide', () => {
-               pipRootRef.current?.unmount();
-               pipRootRef.current = null;
-               pipWindowRef.current = null;
-               
-               // Stop stream when PIP closes
-               if (mediaStreamRef.current) {
-                   mediaStreamRef.current.getTracks().forEach(t => t.stop());
-                   mediaStreamRef.current = null;
-               }
-               
-               setView(AppView.EDITOR);
-               addToast("Capture session ended. Review your slides.", 'info');
+              pipWindowRef.current = null;
+              pipRootRef.current = null;
+              setIsFloatingSnapping(false);
           });
 
-          // Stay on Dashboard/Editor view
-          setView(AppView.EDITOR);
-
       } catch (err) {
-          console.error("Floating capture session failed", err);
-          
-          // Improved Error Handling
-          if (err instanceof Error) {
-              if (err.name === 'NotAllowedError') {
-                  // User denied permission or browser blocked it
-                  if (window.self !== window.top) {
-                      // If in iframe, it might be the PiP restriction
-                      setIsRestrictedModalOpen(true);
-                  } else {
-                      addToast("Screen capture permission denied.", 'error');
-                  }
-              } else {
-                  addToast(`Failed to start session: ${err.message}`, 'error');
-              }
-          } else {
-              addToast("Failed to start capture session.", 'error');
-          }
+          console.error("PIP failed", err);
+          addToast("Failed to open Floating Widget", "error");
       }
   };
 
-  // Mode = 'full' or 'area'
-  const handleScreenSnapshot = async (mode: 'full' | 'area' = 'full') => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ 
-        video: { displaySurface: "monitor" },
-        audio: false
-      });
-      
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.muted = true;
-      await video.play();
-
-      await new Promise(r => setTimeout(r, 500));
-
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      
-      if (ctx) {
-        ctx.drawImage(video, 0, 0);
-        canvas.toBlob(blob => {
-          if (blob) {
-              const url = URL.createObjectURL(blob);
-              
-              if (mode === 'area') {
-                  setCropImageSrc(url);
-                  setIsCropping(true);
-                  // Note: We stop the stream later after cropping? 
-                  // No, we can stop stream now because we have the image in blob
-              } else {
-                  const newSlide: Slide = {
-                      id: crypto.randomUUID(),
-                      type: 'image',
-                      src: url,
-                      name: `Screenshot ${new Date().toLocaleTimeString()}`,
-                      annotations: [],
-                      createdAt: Date.now()
-                  };
-                  setSlides(prev => [...prev, newSlide]);
-                  setActiveSlideId(newSlide.id);
-                  setView(AppView.EDITOR);
-                  addToast('Screen captured successfully', 'success');
-              }
-          }
-        }, 'image/png');
-      }
-      
-      stream.getTracks().forEach(track => track.stop());
-      video.srcObject = null;
-
-    } catch (err) {
-      console.error("Screen capture cancelled or failed", err);
-      if (err instanceof Error && err.name === 'NotAllowedError') {
-        addToast("Screen capture permission denied.", 'error');
-      } else {
-        addToast("Failed to capture screen.", 'error');
-      }
-    }
-  };
-
-  const handleCropComplete = (croppedBlob: Blob) => {
-     const url = URL.createObjectURL(croppedBlob);
-     const newSlide: Slide = {
-        id: crypto.randomUUID(),
-        type: 'image',
-        src: url,
-        name: `Area Snap ${new Date().toLocaleTimeString()}`,
-        annotations: [],
-        createdAt: Date.now()
-     };
-     setSlides(prev => [...prev, newSlide]);
-     setActiveSlideId(newSlide.id);
-     setView(AppView.EDITOR);
-     setIsCropping(false);
-     setCropImageSrc(null);
-     addToast('Area captured successfully', 'success');
-  };
-
-  const handlePaste = useCallback((e: ClipboardEvent) => {
-    if (e.clipboardData && e.clipboardData.files.length > 0) {
-      handleFileUpload(e.clipboardData.files);
-    } else if (e.clipboardData) {
-        const items = e.clipboardData.items;
-        for (let i = 0; i < items.length; i++) {
-            if (items[i].type.indexOf("image") !== -1) {
-                const blob = items[i].getAsFile();
-                if (blob) {
-                    handleFileUpload(createFileList([blob]));
-                }
-            }
-        }
-    }
-  }, []);
-  
-  const createFileList = (files: File[]) => {
-      const dt = new DataTransfer();
-      files.forEach(file => dt.items.add(file));
-      return dt.files;
-  };
-
-  useEffect(() => {
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
-  }, [handlePaste]);
-
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    setIsDragging(false);
-  };
-
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileUpload(e.dataTransfer.files);
-  };
-
-  const handleTriggerFileUpload = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleDeleteSlide = (id: string) => {
-    setSlides(prevSlides => {
-        const newSlides = prevSlides.filter(s => s.id !== id);
-        if (activeSlideId === id) {
-          setActiveSlideId(newSlides.length > 0 ? newSlides[0].id : null);
-        }
-        return newSlides;
-    });
-    addToast('Slide deleted', 'info');
-  };
-
-  // -- Crop Overlay Component (Internal) --
-  const CropOverlay = () => {
-      if (!isCropping || !cropImageSrc) return null;
-      
-      const [start, setStart] = useState<{x: number, y: number} | null>(null);
-      const [current, setCurrent] = useState<{x: number, y: number} | null>(null);
-      const imgRef = useRef<HTMLImageElement>(null);
-      const containerRef = useRef<HTMLDivElement>(null);
-
-      const onMouseDown = (e: React.MouseEvent) => {
-          const rect = containerRef.current?.getBoundingClientRect();
-          if (!rect) return;
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
-          setStart({x, y});
-          setCurrent({x, y});
-      };
-
-      const onMouseMove = (e: React.MouseEvent) => {
-          if (!start) return;
-          const rect = containerRef.current?.getBoundingClientRect();
-          if (!rect) return;
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
-          setCurrent({x, y});
-      };
-
-      const onMouseUp = () => {
-          // We wait for user to click "Done"
-      };
-
-      const handleDone = () => {
-          if (!start || !current || !imgRef.current) {
-               setIsCropping(false);
-               return;
-          }
-          
-          // Calculate crop coords relative to actual image size vs displayed size
-          const displayedW = imgRef.current.width;
-          const displayedH = imgRef.current.height;
-          const naturalW = imgRef.current.naturalWidth;
-          const naturalH = imgRef.current.naturalHeight;
-          
-          const scaleX = naturalW / displayedW;
-          const scaleY = naturalH / displayedH;
-
-          const x = Math.min(start.x, current.x) * scaleX;
-          const y = Math.min(start.y, current.y) * scaleY;
-          const w = Math.abs(current.x - start.x) * scaleX;
-          const h = Math.abs(current.y - start.y) * scaleY;
-
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          
-          if (ctx) {
-              ctx.drawImage(imgRef.current, x, y, w, h, 0, 0, w, h);
-              canvas.toBlob(blob => {
-                  if (blob) handleCropComplete(blob);
-              }, 'image/png');
-          }
-      };
-
+  if (view === AppView.LOGIN) {
       return (
-          <div className="fixed inset-0 z-[60] bg-black/80 flex flex-col items-center justify-center p-8">
-               <h2 className="text-white text-xl font-bold mb-4">Select Area to Crop</h2>
-               <div 
-                  ref={containerRef}
-                  className="relative border-2 border-white shadow-2xl cursor-crosshair overflow-hidden max-h-[80vh]"
-                  onMouseDown={onMouseDown}
-                  onMouseMove={onMouseMove}
-                  onMouseUp={onMouseUp}
-               >
-                  <img ref={imgRef} src={cropImageSrc} className="max-h-[80vh] block select-none pointer-events-none" />
-                  {start && current && (
-                      <div 
-                         className="absolute border-2 border-blue-500 bg-blue-500/20"
-                         style={{
-                             left: Math.min(start.x, current.x),
-                             top: Math.min(start.y, current.y),
-                             width: Math.abs(current.x - start.x),
-                             height: Math.abs(current.y - start.y)
-                         }}
-                      />
-                  )}
-               </div>
-               <div className="mt-6 flex gap-4">
-                   <button onClick={() => setIsCropping(false)} className="bg-white text-slate-900 px-6 py-2 rounded font-bold hover:bg-slate-200">Cancel</button>
-                   <button onClick={handleDone} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Done</button>
-               </div>
-          </div>
-      )
-  }
+          <div className="flex flex-col items-center justify-center h-full bg-slate-50 dark:bg-[#0f0f0f] p-4 text-center transition-colors">
+              <div className="mb-8 relative group">
+                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
+                  <div className="relative w-24 h-24 bg-white dark:bg-[#1e1e1e] rounded-xl flex items-center justify-center shadow-xl">
+                      <Bug size={48} className="text-blue-600 dark:text-blue-500" />
+                  </div>
+              </div>
+              <h1 className="text-4xl font-black text-slate-900 dark:text-white mb-3 tracking-tight">BugSnap</h1>
+              <p className="text-lg text-slate-600 dark:text-zinc-400 mb-8 max-w-md leading-relaxed">
+                  The AI-powered visual bug reporting tool for modern engineering teams.
+              </p>
 
-  // Detect Preview Environment
-  const isPreviewEnv = typeof window !== 'undefined' && (
-    window.location.hostname.includes('webcontainer') || 
-    window.location.hostname.includes('bolt') || 
-    window.location.hostname.includes('stackblitz') ||
-    window.location.hostname.includes('preview')
-  );
-
-  if (!user || view === AppView.LOGIN) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0f0f0f] flex flex-col items-center justify-center p-4 transition-colors">
-        <button 
-            onClick={toggleTheme}
-            className="absolute top-6 right-6 p-2 rounded-full bg-white dark:bg-[#1e1e1e] shadow-sm border border-slate-200 dark:border-[#272727] text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#272727] transition"
-        >
-            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-        </button>
-
-        <div className="bg-white dark:bg-[#1e1e1e] p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-100 dark:border-[#272727]">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-6 flex items-center justify-center text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/20">
-            <Bug size={32} />
-          </div>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">BugSnap</h1>
-          <p className="text-slate-500 dark:text-zinc-400 mb-8">AI-powered visual bug reporting. Capture, annotate, and push to Jira/ClickUp in seconds.</p>
-          
-          {/* Google Sign In Container */}
-            <div className="min-h-[44px] w-full flex justify-center relative flex-col gap-4">
-                 <div id="googleSignInButton" className="w-full flex justify-center">
-                    {/* Placeholder to prevent layout shift while script loads */}
-                    <div className="w-[350px] h-[44px] bg-slate-100 dark:bg-[#272727] rounded animate-pulse"></div>
-                 </div>
+              <div className="bg-white dark:bg-[#1e1e1e] p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 dark:border-[#272727] transition-colors">
+                 <div id="googleSignInButton" className="flex justify-center min-h-[44px] mb-4"></div>
                  
-                 <div className="flex items-center gap-3 w-full max-w-[350px] mx-auto">
-                    <div className="h-px bg-slate-200 dark:bg-[#272727] flex-1"></div>
-                    <span className="text-xs text-slate-400 font-medium">OR</span>
-                    <div className="h-px bg-slate-200 dark:bg-[#272727] flex-1"></div>
+                 <div className="relative flex py-4 items-center">
+                    <div className="flex-grow border-t border-slate-200 dark:border-[#3f3f3f]"></div>
+                    <span className="flex-shrink-0 mx-4 text-slate-400 text-xs font-bold uppercase">Or continue as</span>
+                    <div className="flex-grow border-t border-slate-200 dark:border-[#3f3f3f]"></div>
                  </div>
-                 
+
                  <button 
-                    onClick={handleGuestLogin}
-                    className="flex items-center justify-center gap-2 text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white font-medium text-sm transition-colors py-2 group"
+                   onClick={handleGuestLogin}
+                   className="w-full py-3 bg-slate-100 dark:bg-[#272727] hover:bg-slate-200 dark:hover:bg-[#3f3f3f] text-slate-700 dark:text-zinc-300 font-bold rounded-lg transition-all flex items-center justify-center gap-2"
                  >
-                    <UserIcon size={16} className="group-hover:text-blue-600 transition-colors" />
-                    Continue as Guest (No Login)
+                   <UserIcon size={18} /> Guest User
                  </button>
-            </div>
-
-          <p className="mt-8 text-xs text-slate-400">v1.0.0 • No credit card required</p>
-        </div>
-      </div>
-    );
+              </div>
+          </div>
+      );
   }
 
   return (
-    <div 
-      className="h-screen flex flex-col bg-slate-50 dark:bg-[#0f0f0f] relative overflow-hidden transition-colors"
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
-      <input 
-        type="file" 
-        multiple 
-        className="hidden" 
-        ref={fileInputRef} 
-        onChange={(e) => handleFileUpload(e.target.files)} 
-        accept="image/*,video/*"
-      />
-      
-      <RestrictedModal isOpen={isRestrictedModalOpen} onClose={() => setIsRestrictedModalOpen(false)} />
-      <CropOverlay />
+    <div className={`h-full flex flex-col ${isDarkMode ? 'dark' : ''}`}>
+       <RestrictedModal isOpen={isRestrictedModalOpen} onClose={() => setIsRestrictedModalOpen(false)} />
 
-      {/* Top Navigation Bar */}
-      <nav className="bg-white dark:bg-[#0f0f0f] border-b border-slate-200 dark:border-[#272727] h-14 flex items-center justify-between px-4 shrink-0 z-30 transition-colors">
-        <div className="flex items-center gap-6">
-           {/* Logo */}
-           <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-lg cursor-pointer select-none" onClick={() => setView(AppView.DASHBOARD)}>
-              <span className="text-blue-600 font-extrabold">Bug</span>Snap
+       {view !== AppView.LOGIN && (
+           <div className="flex h-full overflow-hidden">
+               {/* Sidebar */}
+               <div className="w-16 bg-slate-900 dark:bg-[#050505] flex flex-col items-center py-6 shrink-0 z-50">
+                   <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white mb-8 shadow-lg shadow-blue-900/50">
+                       <Bug size={24} />
+                   </div>
+                   
+                   <nav className="flex flex-col gap-4 w-full px-2">
+                       <NavButton 
+                           active={view === AppView.DASHBOARD} 
+                           onClick={() => setView(AppView.DASHBOARD)} 
+                           icon={<LayoutTemplate size={20} />} 
+                           label="Dashboard" 
+                       />
+                       <NavButton 
+                           active={view === AppView.EDITOR} 
+                           onClick={() => setView(AppView.EDITOR)} 
+                           icon={<PenTool size={20} />} 
+                           label="Editor" 
+                           badge={slides.length}
+                       />
+                       <NavButton 
+                           active={view === AppView.INTEGRATIONS} 
+                           onClick={() => setView(AppView.INTEGRATIONS)} 
+                           icon={<Zap size={20} />} 
+                           label="Integrations" 
+                       />
+                   </nav>
+
+                   <div className="mt-auto flex flex-col gap-4 w-full px-2">
+                       <button 
+                           onClick={toggleTheme}
+                           className="w-full aspect-square flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                           title={isDarkMode ? "Light Mode" : "Dark Mode"}
+                       >
+                           {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+                       </button>
+                       <div className="w-full h-px bg-white/10"></div>
+                       <button 
+                           onClick={handleLogout}
+                           className="w-full aspect-square flex items-center justify-center rounded-xl text-slate-400 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                           title="Logout"
+                       >
+                           <LogOut size={20} />
+                       </button>
+                   </div>
+               </div>
+
+               {/* Main Content Area */}
+               <div className="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0f0f0f]">
+                   {view === AppView.DASHBOARD && (
+                       <Dashboard 
+                           onCapture={() => handleFloatingCaptureSession()} 
+                           onRecord={handleVideoRecord} 
+                           onUpload={() => fileInputRef.current?.click()} 
+                       />
+                   )}
+                   
+                   {view === AppView.EDITOR && (
+                       <Editor 
+                           slides={slides}
+                           activeSlideId={activeSlideId || ''}
+                           onSelectSlide={setActiveSlideId}
+                           onUpdateSlide={(updated) => setSlides(prev => prev.map(s => s.id === updated.id ? updated : s))}
+                           onDeleteSlide={(id) => {
+                               const newSlides = slides.filter(s => s.id !== id);
+                               setSlides(newSlides);
+                               if (newSlides.length === 0) setView(AppView.DASHBOARD);
+                               else if (activeSlideId === id) setActiveSlideId(newSlides[0].id);
+                           }}
+                           onAddSlide={() => fileInputRef.current?.click()}
+                           onCaptureScreen={() => handleFloatingCaptureSession()}
+                           onRecordVideo={handleVideoRecord}
+                           onClose={() => setView(AppView.DASHBOARD)}
+                       />
+                   )}
+
+                   {view === AppView.INTEGRATIONS && (
+                       <IntegrationsHub />
+                   )}
+               </div>
            </div>
+       )}
 
-           {/* Pill Navigation */}
-           <div className="bg-slate-100 dark:bg-[#1e1e1e] p-1 rounded-lg flex gap-1">
-             <button 
-               onClick={() => setView(AppView.DASHBOARD)}
-               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.DASHBOARD ? 'bg-white dark:bg-[#272727] text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'}`}
-             >
-               <Home size={14} />
-               Dashboard
-             </button>
-             
-             {/* Show "Current Session" if active slides exist */}
-             {slides.length > 0 && (
-                 <button 
-                   onClick={() => setView(AppView.EDITOR)}
-                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.EDITOR ? 'bg-white dark:bg-[#272727] text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'}`}
-                 >
-                   <PenTool size={14} />
-                   Current Session ({slides.length})
-                 </button>
-             )}
-
-             <button 
-               onClick={() => setView(AppView.INTEGRATIONS)}
-               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${view === AppView.INTEGRATIONS ? 'bg-white dark:bg-[#272727] text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200'}`}
-             >
-               <Zap size={14} />
-               Integrations
-             </button>
-           </div>
-        </div>
-        
-        {/* Right Actions */}
-        <div className="flex items-center gap-3">
-          {/* Floating Trigger (Top Bar shortcut) */}
-          {view === AppView.EDITOR && (
-             <button 
-               onClick={handleFloatingCaptureSession}
-               className="text-slate-500 dark:text-zinc-400 hover:bg-blue-50 dark:hover:bg-[#272727] hover:text-blue-600 dark:hover:text-blue-400 p-2 rounded-lg transition hidden md:block"
-               title="Launch Floating Snap Widget"
-             >
-               <LayoutTemplate size={18} />
-             </button>
-          )}
-          
-          <button 
-            onClick={toggleTheme}
-            className="text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#272727] p-2 rounded-lg transition"
-            title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-          >
-            {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-
-          <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
-          
-          <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition p-1" title="Logout">
-              <LogOut size={18} />
-          </button>
-
-          {user.avatar ? (
-              <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full border border-slate-200 dark:border-[#272727]" title={user.name} />
-          ) : (
-              <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-[#1e1e1e] flex items-center justify-center text-slate-500 dark:text-zinc-400 font-bold border border-slate-300 dark:border-[#272727]" title={user.name}>
-                  {user.name.charAt(0)}
-              </div>
-          )}
-        </div>
-      </nav>
-
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-hidden relative flex flex-col">
-        {view === AppView.DASHBOARD && (
-            <Dashboard 
-                onCapture={handleFloatingCaptureSession}
-                onRecord={handleVideoRecord}
-                onUpload={handleTriggerFileUpload}
-            />
-        )}
-        {view === AppView.INTEGRATIONS && <IntegrationsHub />}
-        {view === AppView.EDITOR && slides.length > 0 && (
-          <Editor 
-            slides={slides}
-            activeSlideId={activeSlideId || slides[0].id}
-            onSelectSlide={setActiveSlideId}
-            onUpdateSlide={(updated) => {
-              setSlides(slides.map(s => s.id === updated.id ? updated : s));
-            }}
-            onDeleteSlide={handleDeleteSlide}
-            onAddSlide={handleTriggerFileUpload}
-            onCaptureScreen={handleFloatingCaptureSession}
-            onRecordVideo={handleVideoRecord}
-            onClose={() => setView(AppView.DASHBOARD)}
-          />
-        )}
-
-        {/* Empty State (Fallback if Editor view is forced but no slides) */}
-        {view === AppView.EDITOR && slides.length === 0 && (
-             <div className="flex-1 flex items-center justify-center flex-col text-slate-400 dark:text-zinc-500">
-                 <p>No active session. Go to Dashboard to start.</p>
-                 <button 
-                    onClick={() => setView(AppView.DASHBOARD)}
-                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg"
-                 >
-                    Go to Dashboard
-                 </button>
-             </div>
-        )}
-        
-        {/* Recording Overlay */}
-        {isRecording && (
-           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 z-50 animate-in slide-in-from-bottom-10">
-              <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-              <span className="font-mono font-bold">{new Date(recordingTime * 1000).toISOString().substr(14, 5)}</span>
-              <button onClick={stopRecording} className="bg-red-600 hover:bg-red-700 px-4 py-1 rounded text-sm font-bold transition">Stop</button>
-           </div>
-        )}
-      </main>
+       {/* Hidden File Input */}
+       <input 
+           type="file" 
+           ref={fileInputRef} 
+           className="hidden" 
+           accept="image/*,video/*" 
+           multiple 
+           onChange={(e) => { handleFileUpload(e.target.files); e.target.value = ''; }} 
+       />
     </div>
   );
 };
+
+const NavButton = ({ active, onClick, icon, label, badge }: any) => (
+    <button 
+        onClick={onClick}
+        className={`w-full aspect-square flex flex-col items-center justify-center rounded-xl transition-all relative group ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
+        title={label}
+    >
+        {icon}
+        {badge !== undefined && badge > 0 && (
+            <div className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></div>
+        )}
+    </button>
+);
 
 export default App;
