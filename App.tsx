@@ -235,10 +235,6 @@ const App: React.FC = () => {
   const pipRootRef = useRef<ReactDOM.Root | null>(null); // React Root for PIP
   const [isFloatingSnapping, setIsFloatingSnapping] = useState(false);
 
-  // Area Capture (Crop)
-  const [isCropping, setIsCropping] = useState(false);
-  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { addToast } = useToast();
 
@@ -572,6 +568,9 @@ const App: React.FC = () => {
                             createdAt: Date.now()
                         };
                         setSlides(prev => [...prev, newSlide]);
+                        // SWITCH TO EDITOR VIEW IMMEDIATELY
+                        setActiveSlideId(newSlide.id);
+                        setView(AppView.EDITOR);
                         success = true;
                     }
                     resolve();
@@ -663,165 +662,228 @@ const App: React.FC = () => {
           pipRootRef.current = ReactDOM.createRoot(container);
           renderPipContent();
 
-          pipWindow.addEventListener('pagehide', () => {
-              pipWindowRef.current = null;
-              pipRootRef.current = null;
-              setIsFloatingSnapping(false);
+           // Handle close
+           pipWindow.addEventListener('pagehide', () => {
+            pipWindowRef.current = null;
+            pipRootRef.current = null;
+            // cleanup if needed
           });
 
       } catch (err) {
           console.error("PIP failed", err);
-          addToast("Failed to open Floating Widget", "error");
+          setIsRestrictedModalOpen(true); // Fallback for error (likely restriction)
       }
   };
 
-  if (view === AppView.LOGIN) {
-      return (
-          <div className="flex flex-col items-center justify-center h-full bg-slate-50 dark:bg-[#0f0f0f] p-4 text-center transition-colors">
-              <div className="mb-8 relative group">
-                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-                  <div className="relative w-24 h-24 bg-white dark:bg-[#1e1e1e] rounded-xl flex items-center justify-center shadow-xl">
-                      <Bug size={48} className="text-blue-600 dark:text-blue-500" />
-                  </div>
-              </div>
-              <h1 className="text-4xl font-black text-slate-900 dark:text-white mb-3 tracking-tight">BugSnap</h1>
-              <p className="text-lg text-slate-600 dark:text-zinc-400 mb-8 max-w-md leading-relaxed">
-                  The AI-powered visual bug reporting tool for modern engineering teams.
-              </p>
-
-              <div className="bg-white dark:bg-[#1e1e1e] p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 dark:border-[#272727] transition-colors">
-                 <div id="googleSignInButton" className="flex justify-center min-h-[44px] mb-4"></div>
-                 
-                 <div className="relative flex py-4 items-center">
-                    <div className="flex-grow border-t border-slate-200 dark:border-[#3f3f3f]"></div>
-                    <span className="flex-shrink-0 mx-4 text-slate-400 text-xs font-bold uppercase">Or continue as</span>
-                    <div className="flex-grow border-t border-slate-200 dark:border-[#3f3f3f]"></div>
-                 </div>
-
-                 <button 
-                   onClick={handleGuestLogin}
-                   className="w-full py-3 bg-slate-100 dark:bg-[#272727] hover:bg-slate-200 dark:hover:bg-[#3f3f3f] text-slate-700 dark:text-zinc-300 font-bold rounded-lg transition-all flex items-center justify-center gap-2"
-                 >
-                   <UserIcon size={18} /> Guest User
-                 </button>
-              </div>
-          </div>
-      );
-  }
+  const NavButton = ({ active, onClick, icon: Icon, children }: any) => (
+    <button
+      onClick={onClick}
+      className={`
+        relative px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2
+        ${active 
+          ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' 
+          : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#272727] hover:text-slate-900 dark:hover:text-white'
+        }
+      `}
+    >
+      <Icon size={16} />
+      {children}
+      {active && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-500 rounded-full" />}
+    </button>
+  );
 
   return (
-    <div className={`h-full flex flex-col ${isDarkMode ? 'dark' : ''}`}>
-       <RestrictedModal isOpen={isRestrictedModalOpen} onClose={() => setIsRestrictedModalOpen(false)} />
+    <div className={`h-screen w-screen flex flex-col bg-slate-50 dark:bg-[#0f0f0f] text-slate-900 dark:text-zinc-100 font-sans transition-colors duration-200 ${isDarkMode ? 'dark' : ''}`}>
+      {/* Restricted Modal */}
+      <RestrictedModal isOpen={isRestrictedModalOpen} onClose={() => setIsRestrictedModalOpen(false)} />
+      
+      {view === AppView.LOGIN ? (
+        <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-[#0f0f0f] relative overflow-hidden">
+            {/* Background Decorations */}
+            <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-500/10 dark:bg-blue-500/5 rounded-full blur-[100px]" />
+            <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-purple-500/10 dark:bg-purple-500/5 rounded-full blur-[100px]" />
 
-       {view !== AppView.LOGIN && (
-           <div className="flex h-full overflow-hidden">
-               {/* Sidebar */}
-               <div className="w-16 bg-slate-900 dark:bg-[#050505] flex flex-col items-center py-6 shrink-0 z-50">
-                   <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white mb-8 shadow-lg shadow-blue-900/50">
-                       <Bug size={24} />
-                   </div>
-                   
-                   <nav className="flex flex-col gap-4 w-full px-2">
-                       <NavButton 
-                           active={view === AppView.DASHBOARD} 
-                           onClick={() => setView(AppView.DASHBOARD)} 
-                           icon={<LayoutTemplate size={20} />} 
-                           label="Dashboard" 
-                       />
-                       <NavButton 
-                           active={view === AppView.EDITOR} 
-                           onClick={() => setView(AppView.EDITOR)} 
-                           icon={<PenTool size={20} />} 
-                           label="Editor" 
-                           badge={slides.length}
-                       />
-                       <NavButton 
-                           active={view === AppView.INTEGRATIONS} 
-                           onClick={() => setView(AppView.INTEGRATIONS)} 
-                           icon={<Zap size={20} />} 
-                           label="Integrations" 
-                       />
-                   </nav>
+            <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 bg-white dark:bg-[#1e1e1e] rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-[#272727] m-4 relative z-10">
+                {/* Left Panel: Branding */}
+                <div className="p-12 bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex flex-col justify-between relative overflow-hidden">
+                     <div className="relative z-10">
+                         <div className="flex items-center gap-3 mb-8">
+                             <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-xl flex items-center justify-center">
+                                 <Aperture size={28} className="text-white" />
+                             </div>
+                             <span className="text-2xl font-bold tracking-tight">BugSnap</span>
+                         </div>
+                         <h1 className="text-4xl font-extrabold mb-4 leading-tight">Visual Bug Reporting,<br/>Reimagined with AI.</h1>
+                         <p className="text-blue-100 text-lg leading-relaxed max-w-md">Capture screenshots, annotate with ease, and let AI generate your bug reports. Sync instantly with ClickUp, Jira, and Slack.</p>
+                     </div>
+                     
+                     <div className="relative z-10 mt-12 grid grid-cols-2 gap-4">
+                         <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/10">
+                             <Monitor className="mb-2 text-blue-200" size={24}/>
+                             <div className="font-bold text-lg">Smart Capture</div>
+                             <div className="text-sm text-blue-200">Screenshots & Video</div>
+                         </div>
+                         <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/10">
+                             <Zap className="mb-2 text-amber-300" size={24}/>
+                             <div className="font-bold text-lg">AI Powered</div>
+                             <div className="text-sm text-blue-200">Auto-descriptions</div>
+                         </div>
+                     </div>
 
-                   <div className="mt-auto flex flex-col gap-4 w-full px-2">
-                       <button 
-                           onClick={toggleTheme}
-                           className="w-full aspect-square flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                           title={isDarkMode ? "Light Mode" : "Dark Mode"}
-                       >
-                           {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-                       </button>
-                       <div className="w-full h-px bg-white/10"></div>
-                       <button 
-                           onClick={handleLogout}
-                           className="w-full aspect-square flex items-center justify-center rounded-xl text-slate-400 hover:text-red-400 hover:bg-red-900/20 transition-colors"
-                           title="Logout"
-                       >
-                           <LogOut size={20} />
-                       </button>
-                   </div>
-               </div>
+                     {/* Abstract Shapes */}
+                     <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl translate-x-1/3 -translate-y-1/3" />
+                     <div className="absolute bottom-0 left-0 w-64 h-64 bg-black/10 rounded-full blur-3xl -translate-x-1/3 translate-y-1/3" />
+                </div>
 
-               {/* Main Content Area */}
-               <div className="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0f0f0f]">
-                   {view === AppView.DASHBOARD && (
-                       <Dashboard 
-                           onCapture={() => handleFloatingCaptureSession()} 
-                           onRecord={handleVideoRecord} 
-                           onUpload={() => fileInputRef.current?.click()} 
-                       />
-                   )}
-                   
-                   {view === AppView.EDITOR && (
-                       <Editor 
-                           slides={slides}
-                           activeSlideId={activeSlideId || ''}
-                           onSelectSlide={setActiveSlideId}
-                           onUpdateSlide={(updated) => setSlides(prev => prev.map(s => s.id === updated.id ? updated : s))}
-                           onDeleteSlide={(id) => {
-                               const newSlides = slides.filter(s => s.id !== id);
-                               setSlides(newSlides);
-                               if (newSlides.length === 0) setView(AppView.DASHBOARD);
-                               else if (activeSlideId === id) setActiveSlideId(newSlides[0].id);
-                           }}
-                           onAddSlide={() => fileInputRef.current?.click()}
-                           onCaptureScreen={() => handleFloatingCaptureSession()}
-                           onRecordVideo={handleVideoRecord}
-                           onClose={() => setView(AppView.DASHBOARD)}
-                       />
-                   )}
+                {/* Right Panel: Login */}
+                <div className="p-12 flex flex-col justify-center items-center bg-white dark:bg-[#1e1e1e]">
+                     <div className="w-full max-w-sm">
+                         <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 text-center">Get Started</h2>
+                         <p className="text-slate-500 dark:text-zinc-400 text-center mb-8">Sign in to access your dashboard</p>
 
-                   {view === AppView.INTEGRATIONS && (
-                       <IntegrationsHub />
-                   )}
-               </div>
-           </div>
-       )}
+                         <div className="space-y-4">
+                             {/* Google Sign In Wrapper */}
+                             <div className="flex justify-center h-[50px] relative overflow-hidden rounded-lg">
+                                 <div id="googleSignInButton" className="w-full"></div>
+                             </div>
 
-       {/* Hidden File Input */}
-       <input 
-           type="file" 
-           ref={fileInputRef} 
-           className="hidden" 
-           accept="image/*,video/*" 
-           multiple 
-           onChange={(e) => { handleFileUpload(e.target.files); e.target.value = ''; }} 
-       />
+                             <div className="relative flex items-center py-2">
+                                 <div className="grow border-t border-slate-200 dark:border-[#3f3f3f]"></div>
+                                 <span className="shrink-0 px-4 text-xs text-slate-400 uppercase font-semibold">Or continue as guest</span>
+                                 <div className="grow border-t border-slate-200 dark:border-[#3f3f3f]"></div>
+                             </div>
+
+                             <button 
+                                 onClick={handleGuestLogin}
+                                 className="w-full py-3 bg-slate-50 dark:bg-[#272727] hover:bg-slate-100 dark:hover:bg-[#333] text-slate-700 dark:text-zinc-300 font-bold rounded-lg border border-slate-200 dark:border-[#3f3f3f] transition-all flex items-center justify-center gap-2 group"
+                             >
+                                 <UserIcon size={18} className="text-slate-400 group-hover:text-slate-600 dark:group-hover:text-zinc-200" />
+                                 Continue as Guest
+                             </button>
+                         </div>
+                         
+                         <p className="mt-8 text-xs text-center text-slate-400">
+                             By continuing, you agree to BugSnap's Terms of Service and Privacy Policy.
+                         </p>
+                     </div>
+                </div>
+            </div>
+            
+            {/* Dark Mode Toggle for Login */}
+            <button 
+                onClick={toggleTheme}
+                className="absolute top-6 right-6 p-3 rounded-full bg-white dark:bg-[#1e1e1e] shadow-md border border-slate-200 dark:border-[#272727] text-slate-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400 transition"
+            >
+                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
+        </div>
+      ) : (
+        <div className="flex flex-col h-full overflow-hidden">
+            {/* Top Navigation Bar */}
+            <div className="h-16 bg-white dark:bg-[#1e1e1e] border-b border-slate-200 dark:border-[#272727] flex items-center justify-between px-6 shrink-0 z-30 transition-colors shadow-sm">
+                <div className="flex items-center gap-8">
+                    {/* Logo */}
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
+                            <Aperture size={20} className="text-white" />
+                        </div>
+                        <span className="font-extrabold text-xl tracking-tight text-slate-900 dark:text-white">BugSnap</span>
+                    </div>
+
+                    {/* Navigation Links */}
+                    <div className="flex items-center gap-2">
+                        <NavButton active={view === AppView.DASHBOARD} onClick={() => setView(AppView.DASHBOARD)} icon={Home}>Dashboard</NavButton>
+                        <NavButton active={view === AppView.EDITOR} onClick={() => setView(AppView.EDITOR)} icon={PenTool}>
+                            Editor
+                            {slides.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 rounded-full">{slides.length}</span>}
+                        </NavButton>
+                        <NavButton active={view === AppView.INTEGRATIONS} onClick={() => setView(AppView.INTEGRATIONS)} icon={Zap}>Integrations</NavButton>
+                    </div>
+                </div>
+
+                {/* Right Side Actions */}
+                <div className="flex items-center gap-4">
+                    <button onClick={toggleTheme} className="text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 transition">
+                        {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+                    </button>
+
+                    <div className="flex items-center gap-3 pl-2">
+                         {user?.avatar ? (
+                             <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full border border-slate-200 dark:border-[#3f3f3f]" />
+                         ) : (
+                             <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                                 {user?.name.charAt(0).toUpperCase()}
+                             </div>
+                         )}
+                         <div className="hidden md:block text-sm">
+                             <div className="font-bold text-slate-800 dark:text-white leading-none">{user?.name}</div>
+                             <div className="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Free Plan</div>
+                         </div>
+                         <button onClick={handleLogout} className="ml-2 text-slate-400 hover:text-red-500 transition" title="Logout">
+                             <LogOut size={18} />
+                         </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Content Area - Enforce Scroll */}
+            <div className="flex-1 overflow-hidden relative flex flex-col">
+               {isRecording && (
+                 <div className="bg-red-500 text-white text-xs font-bold px-4 py-1 text-center animate-pulse flex items-center justify-center gap-2 shadow-md z-40">
+                    <div className="w-2 h-2 bg-white rounded-full"></div>
+                    Recording Screen... {new Date(recordingTime * 1000).toISOString().substr(14, 5)}
+                    <button onClick={() => { 
+                        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                            mediaRecorderRef.current.stop();
+                        }
+                    }} className="ml-4 bg-white text-red-600 px-2 py-0.5 rounded text-[10px] hover:bg-red-50 uppercase tracking-wide">Stop</button>
+                 </div>
+               )}
+
+               {view === AppView.DASHBOARD && (
+                  <Dashboard 
+                    onCapture={handleSnapFromStream} 
+                    onRecord={handleVideoRecord} 
+                    onUpload={() => fileInputRef.current?.click()}
+                  />
+               )}
+               {view === AppView.EDITOR && (
+                 <Editor 
+                   slides={slides}
+                   activeSlideId={activeSlideId!}
+                   onSelectSlide={setActiveSlideId}
+                   onUpdateSlide={(updated) => setSlides(prev => prev.map(s => s.id === updated.id ? updated : s))}
+                   onDeleteSlide={(id) => {
+                       const newSlides = slides.filter(s => s.id !== id);
+                       setSlides(newSlides);
+                       if (newSlides.length === 0) {
+                           setView(AppView.DASHBOARD);
+                       } else if (activeSlideId === id) {
+                           setActiveSlideId(newSlides[0].id);
+                       }
+                   }}
+                   onAddSlide={() => fileInputRef.current?.click()}
+                   onCaptureScreen={handleSnapFromStream}
+                   onRecordVideo={handleVideoRecord}
+                   onClose={() => setView(AppView.DASHBOARD)}
+                 />
+               )}
+               {view === AppView.INTEGRATIONS && <IntegrationsHub />}
+            </div>
+        </div>
+      )}
+
+      {/* Hidden File Input */}
+      <input 
+        type="file" 
+        multiple 
+        accept="image/*,video/*" 
+        className="hidden" 
+        ref={fileInputRef}
+        onChange={(e) => handleFileUpload(e.target.files)}
+      />
     </div>
   );
 };
-
-const NavButton = ({ active, onClick, icon, label, badge }: any) => (
-    <button 
-        onClick={onClick}
-        className={`w-full aspect-square flex flex-col items-center justify-center rounded-xl transition-all relative group ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-        title={label}
-    >
-        {icon}
-        {badge !== undefined && badge > 0 && (
-            <div className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></div>
-        )}
-    </button>
-);
 
 export default App;
