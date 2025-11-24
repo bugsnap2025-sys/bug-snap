@@ -33,6 +33,7 @@ import {
 const GOOGLE_CLIENT_ID: string = "1070648127842-br5nqmcsqq2ufbd4hpajfu8llu0an9t8.apps.googleusercontent.com";
 
 // --- Floating Widget Component (Rendered in PIP Window) ---
+// Using inline styles to prevent FOUC (Flash of Unstyled Content) in the new window context
 const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap: () => Promise<boolean>, onStop: () => void, slideCount: number, isSnapping: boolean }) => {
   const [flashing, setFlashing] = useState(false);
 
@@ -49,42 +50,93 @@ const FloatingSnapWidget = ({ onSnap, onStop, slideCount, isSnapping }: { onSnap
 
   return (
     <div 
-      className={`w-full h-full flex items-center justify-between bg-zinc-900 text-white overflow-hidden px-3 select-none`}
       style={{ 
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-        backgroundColor: '#18181b', // Immediate dark background
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#18181b', // Immediate dark background (zinc-950)
+        color: '#ffffff',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+        padding: '0 12px',
+        boxSizing: 'border-box',
         opacity: isSnapping ? 0 : 1,
-        transition: 'opacity 0.2s ease-in-out' // Fast fade out
+        transition: 'opacity 0.2s ease-in-out',
+        userSelect: 'none',
+        overflow: 'hidden'
       }}
     >
         {/* Left: Counter Badge */}
-        <div 
-            className="flex items-center gap-1.5 bg-zinc-800/80 px-2.5 py-1 rounded-full border border-zinc-700 shadow-sm"
-            style={{ minWidth: '40px' }}
-        >
-           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${flashing ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`} />
-           <span className="font-mono font-bold text-xs leading-none text-zinc-200">{slideCount}</span>
+        <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: 'rgba(255,255,255,0.1)',
+            padding: '4px 10px',
+            borderRadius: '20px',
+            fontSize: '14px',
+            fontWeight: '600',
+            minWidth: '48px',
+            justifyContent: 'center',
+            border: '1px solid rgba(255,255,255,0.1)'
+        }}>
+           <div style={{
+               width: '8px',
+               height: '8px',
+               borderRadius: '50%',
+               backgroundColor: flashing ? '#4ade80' : '#3b82f6',
+               transition: 'background-color 0.2s'
+           }} />
+           <span style={{ lineHeight: 1 }}>{slideCount}</span>
         </div>
 
         {/* Center: Action Button */}
         <button 
              onClick={handleSnap}
              disabled={isSnapping}
-             className="flex-1 mx-2 bg-white hover:bg-zinc-200 text-black active:scale-95 transition-all h-8 rounded-md font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 whitespace-nowrap"
-             aria-label="Capture Screenshot"
+             style={{
+                 flex: 1,
+                 margin: '0 12px',
+                 height: '36px',
+                 backgroundColor: '#ffffff',
+                 color: '#000000',
+                 border: 'none',
+                 borderRadius: '8px',
+                 fontSize: '13px',
+                 fontWeight: '800',
+                 cursor: 'pointer',
+                 display: 'flex',
+                 alignItems: 'center',
+                 justifyContent: 'center',
+                 gap: '8px',
+                 opacity: isSnapping ? 0.5 : 1,
+                 boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+             }}
         >
-             <Camera size={14} className="fill-current" />
-             <span>SNAP</span>
+             <Camera size={18} color="black" />
+             SNAP
         </button>
            
         {/* Right: Close/Stop */}
         <button 
              onClick={onStop}
-             className="text-zinc-500 hover:text-red-400 hover:bg-red-900/20 p-1.5 rounded-md transition-colors"
+             style={{
+                 background: 'none',
+                 border: 'none',
+                 color: '#a1a1aa', // zinc-400
+                 cursor: 'pointer',
+                 padding: '8px',
+                 display: 'flex',
+                 alignItems: 'center',
+                 borderRadius: '50%',
+                 transition: 'background 0.2s'
+             }}
+             onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)'; }}
+             onMouseLeave={(e) => { e.currentTarget.style.color = '#a1a1aa'; e.currentTarget.style.backgroundColor = 'transparent'; }}
              title="End Session"
-             aria-label="End Session"
         >
-             <StopCircle size={18} />
+             <X size={20} />
         </button>
     </div>
   );
@@ -447,19 +499,13 @@ const App: React.FC = () => {
     }
   };
 
-  const stopRecording = () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop();
-      }
-  };
-
   // --- Floating Capture Logic (PIP) ---
 
   const handleSnapFromStream = async (): Promise<boolean> => {
       try {
         setIsFloatingSnapping(true);
-        // CRITICAL: Increased delay to 300ms to ensure UI is fully transparent before capture.
-        await new Promise(r => setTimeout(r, 300));
+        // CRITICAL: Increased delay to 400ms to ensure UI is fully transparent before capture.
+        await new Promise(r => setTimeout(r, 400));
 
         // Use EXISTING stream (Persistent connection)
         let stream = mediaStreamRef.current;
@@ -581,8 +627,8 @@ const App: React.FC = () => {
           }
 
           const pipWindow = await window.documentPictureInPicture.requestWindow({
-              width: 250, // Reduced size
-              height: 50, // Reduced size
+              width: 260, // Optimized width
+              height: 60, // Fixed height
           });
           
           pipWindowRef.current = pipWindow;
