@@ -843,37 +843,6 @@ export const Editor: React.FC<EditorProps> = ({
       )
   }
 
-  // FIX: Handle empty slides to prevent crash
-  if (!activeSlide) {
-      return (
-        <div className="flex flex-col h-full bg-slate-50 dark:bg-[#0f0f0f] relative transition-colors">
-            <CloseConfirmation />
-            <div className="flex-1 flex flex-col items-center justify-center p-8">
-                <div className="bg-white dark:bg-[#1e1e1e] p-8 rounded-2xl shadow-xl border border-slate-200 dark:border-[#272727] max-w-md w-full text-center">
-                    <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Camera size={32} />
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">No Screenshots Yet</h2>
-                    <p className="text-slate-500 dark:text-zinc-400 mb-6">
-                        Capture a screenshot or upload an image to start reporting bugs.
-                    </p>
-                    <div className="flex flex-col gap-3">
-                        <button onClick={onCaptureScreen} className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-2">
-                            <Camera size={18} /> Capture Screen
-                        </button>
-                        <button onClick={onAddSlide} className="w-full py-3 bg-slate-100 dark:bg-[#272727] border border-slate-200 dark:border-[#3f3f3f] text-slate-700 dark:text-white font-bold rounded-xl transition flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-[#333]">
-                            <Upload size={18} /> Upload File
-                        </button>
-                    </div>
-                    <button onClick={onClose} className="mt-6 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300 text-sm font-medium">
-                        Back to Dashboard
-                    </button>
-                </div>
-            </div>
-        </div>
-      );
-  }
-
   return (
     <div className="flex flex-col h-full bg-white dark:bg-[#0f0f0f] relative transition-colors">
       <CloseConfirmation />

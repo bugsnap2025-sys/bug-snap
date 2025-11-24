@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, ClickUpHierarchyList, DashboardFilter, SortField, SortOrder } from '../types';
 import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpService';
@@ -39,14 +40,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   
   // Initialize with persisted list ID if available
   const [selectedListId, setSelectedListId] = useState<string>(() => {
-      try {
-        const savedConfig = localStorage.getItem('bugsnap_config');
-        if (savedConfig) {
-            const config = JSON.parse(savedConfig);
-            return config.clickUpListId || '';
-        }
-      } catch (e) {
-        console.error("Failed to parse config from local storage", e);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (savedConfig) {
+          const config = JSON.parse(savedConfig);
+          return config.clickUpListId || '';
       }
       return '';
   });
@@ -71,46 +68,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
   // Load Lists on Mount (If ClickUp Token exists)
   useEffect(() => {
-     try {
-       const savedConfig = localStorage.getItem('bugsnap_config');
-       if (savedConfig) {
-           const config: IntegrationConfig = JSON.parse(savedConfig);
-           if (config.clickUpToken) {
-               setIsLoadingLists(true);
-               getAllClickUpLists(config.clickUpToken)
-                   .then(lists => {
-                       setAvailableLists(lists);
-                       // If currently selected list is empty, default to config or first
-                       if (!selectedListId) {
-                           if (config.clickUpListId) {
-                               setSelectedListId(config.clickUpListId);
-                           } else if (lists.length > 0) {
-                               setSelectedListId(lists[0].id);
-                           }
-                       }
-                   })
-                   .catch(err => console.error("Failed to load lists for dashboard", err))
-                   .finally(() => setIsLoadingLists(false));
-           }
-       }
-     } catch (e) {
-       console.error("Failed to load/parse config", e);
+     const savedConfig = localStorage.getItem('bugsnap_config');
+     if (savedConfig) {
+         const config: IntegrationConfig = JSON.parse(savedConfig);
+         if (config.clickUpToken) {
+             setIsLoadingLists(true);
+             getAllClickUpLists(config.clickUpToken)
+                 .then(lists => {
+                     setAvailableLists(lists);
+                     // If currently selected list is empty, default to config or first
+                     if (!selectedListId) {
+                         if (config.clickUpListId) {
+                             setSelectedListId(config.clickUpListId);
+                         } else if (lists.length > 0) {
+                             setSelectedListId(lists[0].id);
+                         }
+                     }
+                 })
+                 .catch(err => console.error("Failed to load lists for dashboard", err))
+                 .finally(() => setIsLoadingLists(false));
+         }
      }
   }, []);
 
   const handleListChange = (newListId: string) => {
       setSelectedListId(newListId);
       // Persist selection
-      try {
-        const savedConfig = localStorage.getItem('bugsnap_config');
-        if (savedConfig) {
-            const config = JSON.parse(savedConfig);
-            config.clickUpListId = newListId;
-            const listName = availableLists.find(l => l.id === newListId)?.name;
-            if (listName) config.clickUpListName = listName;
-            localStorage.setItem('bugsnap_config', JSON.stringify(config));
-        }
-      } catch (e) { console.error(e); }
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (savedConfig) {
+          const config = JSON.parse(savedConfig);
+          config.clickUpListId = newListId;
+          const listName = availableLists.find(l => l.id === newListId)?.name;
+          if (listName) config.clickUpListName = listName;
+          localStorage.setItem('bugsnap_config', JSON.stringify(config));
+      }
       // Reload data handled by effect
   };
 
@@ -123,17 +114,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
     setIsLoading(true);
     setError(null);
     
+    const savedConfig = localStorage.getItem('bugsnap_config');
+    if (!savedConfig) {
+      setError("No configuration found. Please set up your integrations.");
+      setIsLoading(false);
+      return;
+    }
+
+    const config: IntegrationConfig = JSON.parse(savedConfig);
+    const targetListId = overrideListId || selectedListId || config.clickUpListId;
+
     try {
-      const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) {
-        setError("No configuration found. Please set up your integrations.");
-        setIsLoading(false);
-        return;
-      }
-
-      const config: IntegrationConfig = JSON.parse(savedConfig);
-      const targetListId = overrideListId || selectedListId || config.clickUpListId;
-
       if (activeSource === 'ClickUp') {
         if (!config.clickUpToken || !targetListId) {
           // If simply not selected yet, don't show error, just wait
@@ -275,45 +266,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   const handleShareDashboardToSlack = async () => {
      setIsSharing(true);
      
+     const savedConfig = localStorage.getItem('bugsnap_config');
+     if (!savedConfig) {
+         setIntegrationModalSource('Slack');
+         setIsSharing(false);
+         return;
+     }
+     const config: IntegrationConfig = JSON.parse(savedConfig);
+
+     if (!config.slackToken || !config.slackChannel) {
+         setIntegrationModalSource('Slack');
+         setIsSharing(false);
+         return;
+     }
+
+     addToast("Posting summary to Slack...", 'info');
+
      try {
-       const savedConfig = localStorage.getItem('bugsnap_config');
-       if (!savedConfig) {
-           setIntegrationModalSource('Slack');
-           setIsSharing(false);
-           return;
-       }
-       const config: IntegrationConfig = JSON.parse(savedConfig);
-
-       if (!config.slackToken || !config.slackChannel) {
-           setIntegrationModalSource('Slack');
-           setIsSharing(false);
-           return;
-       }
-
-       addToast("Posting summary to Slack...", 'info');
-
-       try {
-           const summary = generateDashboardSummary(metrics);
-           await postSlackMessage(config.slackToken, config.slackChannel, summary);
-           addToast("Dashboard summary shared to Slack!", 'success');
-       } catch (e) {
-           console.error(e);
-           const msg = e instanceof Error ? e.message : "Failed to post to Slack";
-           
-           if (msg.includes('corsdemo')) {
-               addToast(
-                   <span>
-                      Proxy Locked. <a href="https://cors-anywhere.herokuapp.com/corsdemo" target="_blank" className="underline font-bold">Unlock Here</a>
-                   </span>, 
-                   'error'
-               );
-           } else {
-               addToast(msg, 'error');
-           }
-       }
+         const summary = generateDashboardSummary(metrics);
+         await postSlackMessage(config.slackToken, config.slackChannel, summary);
+         addToast("Dashboard summary shared to Slack!", 'success');
      } catch (e) {
-       console.error(e);
-       addToast("Configuration error", "error");
+         console.error(e);
+         const msg = e instanceof Error ? e.message : "Failed to post to Slack";
+         
+         if (msg.includes('corsdemo')) {
+             addToast(
+                 <span>
+                    Proxy Locked. <a href="https://cors-anywhere.herokuapp.com/corsdemo" target="_blank" className="underline font-bold">Unlock Here</a>
+                 </span>, 
+                 'error'
+             );
+         } else {
+             addToast(msg, 'error');
+         }
      } finally {
          setIsSharing(false);
      }
@@ -350,10 +336,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         source={integrationModalSource}
         onClose={() => setIntegrationModalSource(null)}
         currentConfig={(() => {
-            try {
-                const saved = localStorage.getItem('bugsnap_config');
-                return saved ? JSON.parse(saved) : {};
-            } catch(e) { return {}; }
+            const saved = localStorage.getItem('bugsnap_config');
+            return saved ? JSON.parse(saved) : {};
         })()}
         onSave={handleSaveIntegration}
       />

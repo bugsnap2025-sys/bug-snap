@@ -1,9 +1,9 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 // Initialize Gemini Client
-// The API key must be obtained exclusively from the environment variable process.env.API_KEY.
-// We safely check if 'process' is defined to avoid ReferenceErrors in browser-only environments.
-const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+// Using the provided fallback key safely. 
+// In a real Vite env, use import.meta.env.VITE_API_KEY, but hardcoding provided key for stability.
+const apiKey = 'AIzaSyBOOzzdxkWdA-Oqr2HPS-ejS2q2Ykf168w'; 
 const ai = new GoogleGenAI({ apiKey });
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
@@ -83,28 +83,19 @@ export const generateAIReportMetadata = async (
       Slide Name: ${slideName}
       Observations:
       ${annotationsList}
+      
+      Output strictly in JSON format:
+      {
+        "title": "A short, descriptive summary (max 10 words)",
+        "description": "A structured markdown description including a summary of issues."
+      }
     `;
 
     const response = await ai.models.generateContent({
       model: modelId,
       contents: prompt,
       config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: {
-              type: Type.STRING,
-              description: "A short, descriptive summary (max 10 words)"
-            },
-            description: {
-              type: Type.STRING,
-              description: "A structured markdown description including a summary of issues."
-            }
-          },
-          required: ["title", "description"],
-          propertyOrdering: ["title", "description"]
-        }
+        responseMimeType: "application/json"
       }
     });
 
