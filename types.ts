@@ -133,4 +133,9 @@ declare global {
       onenter: ((ev: Event) => any) | null;
     };
   }
+
+  class ImageCapture {
+    constructor(track: MediaStreamTrack);
+    grabFrame(): Promise<ImageBitmap>;
+  }
 }
