@@ -1,19 +1,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Safely retrieve API Key to prevent "process is not defined" crashes in browser
-const getApiKey = () => {
-  try {
-    return typeof process !== 'undefined' ? process.env.API_KEY : undefined;
-  } catch (e) {
-    return undefined;
-  }
-};
-
-const API_KEY = getApiKey();
+// Retrieve API Key safely.
+// We access process.env.API_KEY directly so build tools can replace it with the string literal.
+// We wrap in try-catch to handle cases where 'process' is not defined (browser runtime)
+// and the build tool did NOT replace the variable (missing env var).
+let API_KEY = "";
+try {
+  API_KEY = process.env.API_KEY || "";
+} catch (e) {
+  // process is undefined and replacement didn't happen
+  console.warn("API_KEY environment variable not detected.");
+}
 
 // Initialize Gemini Client
-// We pass an empty string if undefined to allow the app to load, though API calls will fail gracefully later
-const ai = new GoogleGenAI({ apiKey: API_KEY || "" });
+const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
   if (!API_KEY) {
@@ -84,22 +84,17 @@ export const generateAIReportMetadata = async (
   try {
     const modelId = 'gemini-2.5-flash';
     
-    // If no annotations, provide generic context
-    if (!annotations || annotations.length === 0) {
-        return { 
-            title: slideName || "Bug Report", 
-            description: "No specific annotations provided. Please review the attached screenshot." 
-        };
-    }
+    // Provide a default context if annotations are empty, so the model still generates a good title/description
+    const contextList = (annotations && annotations.length > 0) 
+        ? annotations.map((a: any, i: number) => `Issue ${i + 1}: ${a.comment}`).join('\n')
+        : "No specific text comments provided. The user annotated the screen with a visual shape (Rectangle/Circle).";
 
-    const annotationsList = annotations.map((a: any, i: number) => `Issue ${i + 1}: ${a.comment}`).join('\n');
-    
     const prompt = `
       You are an expert QA Lead. 
       Analyze the following list of bug observations/annotations from a screenshot and generate a concise Task Title and Description.
 
       Input Context (User Comments):
-      ${annotationsList}
+      ${contextList}
 
       Requirements:
       1. Title: Short, descriptive, and punchy (max 60 chars). Focus on the main issue found in the comments.
@@ -126,7 +121,9 @@ export const generateAIReportMetadata = async (
 
     const text = response.text;
     if (text) {
-        return JSON.parse(text);
+        // Sanitize response: Remove any markdown code blocks if present (e.g. ```json ... ```)
+        const sanitized = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        return JSON.parse(sanitized);
     }
     throw new Error("Empty response");
 
