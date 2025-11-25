@@ -245,7 +245,7 @@ export const WebhookModal: React.FC<WebhookModalProps> = ({
                     </div>
                 </div>
             </div>
-          }
+          )}
         </div>
 
         {/* Footer */}
