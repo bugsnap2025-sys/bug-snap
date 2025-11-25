@@ -53,8 +53,11 @@ export interface IntegrationConfig {
   teamsChannelId?: string; // Channel ID
   asanaToken?: string; // Asana Personal Access Token
   asanaWorkspaceId?: string; // Default Workspace ID
-  zohoDC?: string; // Data Center (com, eu, in, etc.)
-  zohoToken?: string; // OAuth Access Token
+  webhookUrl?: string; // Custom Webhook URL
+  zohoToken?: string; // Zoho Projects OAuth Token
+  zohoDC?: string; // Zoho Data Center (eu, com, etc.)
+  zohoSprintsToken?: string; // Zoho Sprints OAuth Token
+  zohoSprintsDC?: string; // Zoho Sprints Data Center
 }
 
 export enum AppView {
@@ -70,7 +73,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Zoho';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints';
 
 export interface ReportedIssue {
   id: string;
@@ -95,7 +98,9 @@ export type SlackExportMode = 'current' | 'all_files' | 'thread';
 export type JiraExportMode = 'current' | 'all_attachments';
 export type TeamsExportMode = 'current' | 'summary';
 export type AsanaExportMode = 'current' | 'all_attachments';
+export type WebhookExportMode = 'current' | 'all_attachments';
 export type ZohoExportMode = 'current' | 'all_attachments';
+export type ZohoSprintsExportMode = 'current' | 'all_attachments';
 
 // New Video Recording Types
 export type CaptureMode = 'screenshot' | 'video' | 'floating';
@@ -156,13 +161,26 @@ export interface AsanaProject {
 
 // Zoho Types
 export interface ZohoPortal {
-  id: string; // id_string or id
-  name: string;
+    id: string;
+    name: string;
+}
+export interface ZohoProject {
+    id: string;
+    name: string;
 }
 
-export interface ZohoProject {
-  id: string; // id_string
-  name: string;
+// Zoho Sprints Types
+export interface ZohoSprintsTeam {
+    id: string;
+    name: string;
+}
+export interface ZohoSprintsProject {
+    id: string;
+    name: string;
+}
+export interface ZohoSprintsItemType {
+    id: string;
+    name: string;
 }
 
 // Dashboard Filters

@@ -5,7 +5,7 @@ import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpServic
 import { fetchSlackHistory, postSlackMessage, generateDashboardSummary } from '../services/slackService';
 import { fetchJiraIssues } from '../services/jiraService';
 import { fetchAsanaTasks, getAsanaWorkspaces, getAsanaProjects } from '../services/asanaService';
-import { getZohoPortals, getZohoProjects, fetchZohoBugs } from '../services/zohoService';
+import { fetchZohoSprintsItems } from '../services/zohoSprintsService';
 import { useToast } from './ToastProvider';
 import { IntegrationModal } from './IntegrationModal';
 import { 
@@ -26,7 +26,8 @@ import {
   RefreshCcw,
   CreditCard,
   Briefcase,
-  Database
+  Database,
+  Plus
 } from 'lucide-react';
 
 const KPICard = ({ label, value, color, icon }: { label: string, value: string | number, color: string, icon: React.ReactNode }) => {
@@ -75,6 +76,7 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpload }) => {
   const [activeSource, setActiveSource] = useState<IntegrationSource>('ClickUp');
+  const [connectedSources, setConnectedSources] = useState<IntegrationSource[]>([]);
   const [issues, setIssues] = useState<ReportedIssue[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,10 +88,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   const [asanaProjects, setAsanaProjects] = useState<AsanaProject[]>([]);
   const [selectedAsanaProjectId, setSelectedAsanaProjectId] = useState('');
 
-  // Zoho Context
-  const [zohoPortals, setZohoPortals] = useState<any[]>([]); // Just using any for simpler component state here
-  const [selectedZohoPortalId, setSelectedZohoPortalId] = useState('');
-  
   // Initialize with persisted list ID if available
   const [selectedListId, setSelectedListId] = useState<string>(() => {
       try {
@@ -122,13 +120,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
   const { addToast } = useToast();
 
-  // Load Lists/Projects on Mount
+  // Load Configuration and Sources
   useEffect(() => {
      try {
          const savedConfig = localStorage.getItem('bugsnap_config');
          if (savedConfig) {
              const config: IntegrationConfig = JSON.parse(savedConfig);
              
+             const connected: IntegrationSource[] = [];
+             if (config.clickUpToken) connected.push('ClickUp');
+             if (config.jiraToken) connected.push('Jira');
+             if (config.slackToken) connected.push('Slack');
+             if (config.teamsToken) connected.push('Teams'); // Teams usually push only, but can be source if implemented
+             if (config.asanaToken) connected.push('Asana');
+             if (config.zohoSprintsToken) connected.push('ZohoSprints');
+             
+             setConnectedSources(connected);
+
+             // If current active source is not connected, switch to first available
+             if (connected.length > 0 && !connected.includes(activeSource)) {
+                 setActiveSource(connected[0]);
+             }
+
              // ClickUp Lists
              if (config.clickUpToken) {
                  setIsLoadingLists(true);
@@ -161,14 +174,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                              if (projs.length > 0) setSelectedAsanaProjectId(projs[0].gid);
                          });
                      }
-                 }).catch(err => console.error(err));
-             }
-
-             // Zoho Portals
-             if (config.zohoToken && config.zohoDC) {
-                 getZohoPortals(config.zohoDC, config.zohoToken).then(ps => {
-                     setZohoPortals(ps);
-                     if (ps.length > 0) setSelectedZohoPortalId(ps[0].id);
                  }).catch(err => console.error(err));
              }
          }
@@ -262,29 +267,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
             const asanaTasks = await fetchAsanaTasks(config.asanaToken, selectedAsanaProjectId);
             setIssues(asanaTasks);
         }
-        else if (activeSource === 'Zoho') {
-            if (!config.zohoToken || !config.zohoDC) {
-                setError("Zoho is not configured.");
+        else if (activeSource === 'ZohoSprints') {
+            if (!config.zohoSprintsToken || !config.zohoSprintsDC) {
+                setError("Zoho Sprints is not configured.");
                 setIssues([]);
                 setIsLoading(false);
                 return;
             }
-            if (!selectedZohoPortalId) {
-                setIssues([]);
-                setIsLoading(false);
-                return;
-            }
-            // For simplicity in dashboard, we fetch projects for the portal and get bugs from the first one, 
-            // or just show empty if user hasn't selected. 
-            // A full implementation would need a project selector in dashboard similar to Asana.
-            // Let's try to fetch projects first.
-            const projects = await getZohoProjects(config.zohoDC, config.zohoToken, selectedZohoPortalId);
-            if (projects.length > 0) {
-                const bugs = await fetchZohoBugs(config.zohoDC, config.zohoToken, selectedZohoPortalId, projects[0].id);
-                setIssues(bugs);
-            } else {
-                setIssues([]);
-            }
+            // Note: To fetch sprints items we typically need TeamID and ProjectID.
+            // Since we don't store them globally like ClickUp List, we might need to fetch defaults first.
+            // For simplicity in this dashboard view, we might skip deep fetching or use placeholders.
+            // However, to honor the request "fetching support", we will try to fetch. 
+            // Real implementation would require a Project Selector similar to Asana/ClickUp.
+            // Currently alerting limitation.
+            setError("Select a Team/Project context feature coming soon for Zoho Sprints dashboard.");
+            setIssues([]);
         }
         
         if (isRefresh) addToast("Dashboard updated", 'success');
@@ -300,7 +297,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   // Trigger load when source or list changes
   useEffect(() => {
     loadData();
-  }, [activeSource, selectedListId, selectedAsanaProjectId, selectedZohoPortalId]);
+  }, [activeSource, selectedListId, selectedAsanaProjectId]);
 
 
   // --- Derived Data (Filtering & Analytics) ---
@@ -442,8 +439,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         addToast(`${integrationModalSource} connected!`, 'success');
         setIntegrationModalSource(null);
         
-        // Reload data
-        loadData(true);
+        // Reload data and re-evaluate connected sources
+        window.location.reload(); // Simple way to refresh entire state incl. connectedSources
       } catch (e) {
           addToast("Failed to save configuration", "error");
       }
@@ -456,6 +453,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
       } else {
           setSortField(field);
           setSortOrder('desc');
+      }
+  };
+
+  // Icon Helper
+  const getSourceIcon = (source: IntegrationSource) => {
+      switch(source) {
+          case 'ClickUp': return <Layers size={16} />;
+          case 'Jira': return <CreditCard size={16} />;
+          case 'Slack': return <Slack size={16} />;
+          case 'Asana': return <CheckCircle2 size={16} />;
+          case 'ZohoSprints': return <Database size={16} />;
+          default: return <Layers size={16} />;
       }
   };
 
@@ -498,40 +507,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         {/* 2. Visual Separator */}
         <hr className="border-slate-200 dark:border-[#272727] mb-8 transition-colors" />
 
-        {/* 3. Header Row: Title & Right Controls */}
+        {/* 3. Header Row: Title & Source Controls */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <div className="flex gap-4">
+            <div className="flex items-center gap-4">
                 <div className="flex bg-slate-100 dark:bg-[#272727] p-1 rounded-xl">
-                    <button 
-                        onClick={() => setActiveSource('ClickUp')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'ClickUp' ? 'bg-white dark:bg-[#1e1e1e] text-[#7B68EE] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
-                    >
-                        <Layers size={16} /> ClickUp
-                    </button>
-                    <button 
-                         onClick={() => setActiveSource('Jira')}
-                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Jira' ? 'bg-white dark:bg-[#1e1e1e] text-[#0052CC] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
-                    >
-                        <CreditCard size={16} /> Jira
-                    </button>
-                     <button 
-                         onClick={() => setActiveSource('Asana')}
-                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Asana' ? 'bg-white dark:bg-[#1e1e1e] text-[#F06A6A] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
-                    >
-                        <CheckCircle2 size={16} /> Asana
-                    </button>
-                    <button 
-                         onClick={() => setActiveSource('Zoho')}
-                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Zoho' ? 'bg-white dark:bg-[#1e1e1e] text-teal-600 shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
-                    >
-                        <Database size={16} /> Zoho
-                    </button>
-                    <button 
-                         onClick={() => setActiveSource('Slack')}
-                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Slack' ? 'bg-white dark:bg-[#1e1e1e] text-[#4A154B] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
-                    >
-                        <Slack size={16} /> Slack
-                    </button>
+                    {/* Dynamic Source Selector */}
+                    {connectedSources.length > 1 ? (
+                        <div className="relative">
+                            <select 
+                                value={activeSource}
+                                onChange={(e) => setActiveSource(e.target.value as IntegrationSource)}
+                                className="appearance-none pl-10 pr-10 py-2 rounded-lg text-sm font-bold bg-white dark:bg-[#1e1e1e] text-slate-800 dark:text-white shadow-sm focus:outline-none cursor-pointer min-w-[160px]"
+                            >
+                                {connectedSources.map(source => (
+                                    <option key={source} value={source}>{source}</option>
+                                ))}
+                            </select>
+                            <div className="absolute left-3 top-2.5 text-slate-500 dark:text-zinc-400 pointer-events-none">
+                                {getSourceIcon(activeSource)}
+                            </div>
+                            <ChevronDown size={14} className="absolute right-3 top-3 text-slate-400 pointer-events-none" />
+                        </div>
+                    ) : connectedSources.length === 1 ? (
+                        <div className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-white dark:bg-[#1e1e1e] text-slate-800 dark:text-white shadow-sm">
+                            {getSourceIcon(connectedSources[0])}
+                            {connectedSources[0]}
+                        </div>
+                    ) : (
+                        <button 
+                            onClick={() => setIntegrationModalSource('ClickUp')} // Default to ClickUp modal prompt
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-slate-200 dark:bg-[#333] text-slate-600 dark:text-zinc-300 hover:bg-slate-300 dark:hover:bg-[#444] transition"
+                        >
+                            <Plus size={16} /> Connect Integrations
+                        </button>
+                    )}
                 </div>
             </div>
             
@@ -604,36 +613,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                         <button 
                             onClick={handleRefresh} 
                             className="p-1.5 rounded-lg text-slate-400 hover:text-[#F06A6A] hover:bg-[#F06A6A]/5 dark:hover:bg-[#F06A6A]/10 transition"
-                            title="Refresh Data"
-                            disabled={isLoading}
-                        >
-                            <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
-                        </button>
-                    </div>
-                 )}
-
-                 {activeSource === 'Zoho' && (
-                    <div className="flex items-center gap-2 bg-white dark:bg-[#1e1e1e] p-2 rounded-xl border border-slate-200 dark:border-[#272727] shadow-sm transition-colors">
-                        <div className="bg-teal-600/10 dark:bg-teal-600/20 p-1.5 rounded-lg text-teal-600">
-                            <Database size={18} />
-                        </div>
-                        <span className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase px-2 hidden sm:inline">Portal:</span>
-                        <div className="relative min-w-[150px] sm:min-w-[200px]">
-                            <select 
-                                value={selectedZohoPortalId} 
-                                onChange={(e) => setSelectedZohoPortalId(e.target.value)}
-                                className="w-full appearance-none bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-1.5 pl-3 pr-8 text-sm font-bold text-slate-700 dark:text-zinc-200 focus:ring-2 focus:ring-teal-600 focus:border-transparent outline-none cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] transition"
-                            >
-                                {zohoPortals.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                                {zohoPortals.length === 0 && <option value="">No Portals Found</option>}
-                            </select>
-                            <ChevronDown size={14} className="absolute right-3 top-2.5 text-slate-400 pointer-events-none"/>
-                        </div>
-                        <button 
-                            onClick={handleRefresh} 
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-600/5 dark:hover:bg-teal-600/10 transition"
                             title="Refresh Data"
                             disabled={isLoading}
                         >

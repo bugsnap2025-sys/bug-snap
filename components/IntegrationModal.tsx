@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Database, Link as LinkIcon } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
 import { validateJiraCredentials } from '../services/jiraService';
 import { validateTeamsConnection, extractTeamsInfoFromUrl } from '../services/teamsService';
 import { validateAsanaToken } from '../services/asanaService';
-import { validateZohoToken } from '../services/zohoService';
+import { validateWebhookUrl } from '../services/webhookService';
 
 interface IntegrationModalProps {
   isOpen: boolean;
@@ -71,7 +71,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     if (newConfig.teamsTeamId) newConfig.teamsTeamId = newConfig.teamsTeamId.trim();
     if (newConfig.teamsChannelId) newConfig.teamsChannelId = newConfig.teamsChannelId.trim();
     if (newConfig.asanaToken) newConfig.asanaToken = newConfig.asanaToken.trim();
-    if (newConfig.zohoToken) newConfig.zohoToken = newConfig.zohoToken.trim();
+    if (newConfig.webhookUrl) newConfig.webhookUrl = newConfig.webhookUrl.trim();
 
     setIsValidating(true);
     setError(null);
@@ -121,19 +121,12 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             const isValid = await validateAsanaToken(newConfig.asanaToken);
             if (!isValid) throw new Error("Asana Authentication Failed.");
         }
-        else if (source === 'Zoho') {
-            // Fix: Default to 'com' if user didn't change the dropdown (visual default)
-            const dc = newConfig.zohoDC || 'com';
-            
-            if (!newConfig.zohoToken) {
-                throw new Error("OAuth Access Token is required.");
+        else if (source === 'Webhook') {
+            if (!newConfig.webhookUrl) {
+                throw new Error("Webhook URL is required.");
             }
-            
-            // Use the resolved DC for validation
-            await validateZohoToken(dc, newConfig.zohoToken);
-            
-            // Ensure the defaulted DC is saved to config
-            newConfig.zohoDC = dc;
+            const isValid = await validateWebhookUrl(newConfig.webhookUrl);
+            if (!isValid) throw new Error("Invalid URL format.");
         }
 
         setIsValidating(false);
@@ -172,16 +165,14 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
       } else if (source === 'Asana') {
           newConfig.asanaToken = undefined;
           newConfig.asanaWorkspaceId = undefined;
-      } else if (source === 'Zoho') {
-          newConfig.zohoToken = undefined;
-          newConfig.zohoDC = undefined;
+      } else if (source === 'Webhook') {
+          newConfig.webhookUrl = undefined;
       }
       
       onSave(newConfig as IntegrationConfig);
       onClose();
   };
 
-  // Render content based on source
   const renderContent = () => {
     switch(source) {
         case 'ClickUp':
@@ -295,7 +286,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                         </div>
                      </div>
                      
-                     {/* New Link Parser Input */}
                      <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800">
                         <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">Auto-fill from Channel Link</label>
                         <div className="relative">
@@ -358,50 +348,27 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                     </div>
                 </div>
              );
-         case 'Zoho':
-             const zohoConsoleUrl = (() => {
-                 const dc = formData.zohoDC || 'com';
-                 if (dc === 'eu') return 'https://api-console.zoho.eu/';
-                 if (dc === 'in') return 'https://api-console.zoho.in/';
-                 if (dc === 'com.au') return 'https://api-console.zoho.com.au/';
-                 if (dc === 'jp') return 'https://api-console.zoho.jp/';
-                 return 'https://api-console.zoho.com/';
-             })();
-
-             return (
-                 <div className="space-y-4">
+        case 'Webhook':
+            return (
+                <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Data Center</label>
-                        <select
-                            className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-teal-600 focus:border-transparent p-3 text-sm text-slate-900 dark:text-white outline-none transition-colors cursor-pointer"
-                            value={formData.zohoDC || 'com'}
-                            onChange={(e) => handleChange('zohoDC', e.target.value)}
-                        >
-                            <option value="com">US (zoho.com)</option>
-                            <option value="eu">Europe (zoho.eu)</option>
-                            <option value="in">India (zoho.in)</option>
-                            <option value="com.au">Australia (zoho.com.au)</option>
-                            <option value="jp">Japan (zoho.jp)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">OAuth Access Token</label>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Webhook URL</label>
                         <div className="relative">
                             <input 
-                                type="password" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-teal-600 focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="1000.xxxx..."
-                                value={formData.zohoToken || ''}
-                                onChange={(e) => handleChange('zohoToken', e.target.value)}
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-pink-600 focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="https://hooks.zapier.com/hooks/catch/..."
+                                value={formData.webhookUrl || ''}
+                                onChange={(e) => handleChange('webhookUrl', e.target.value)}
                             />
-                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                            <LinkIcon className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
-                            Generate via <a href={zohoConsoleUrl} target="_blank" className="text-teal-600 underline">Zoho API Console</a> (Self Client). Scope: <code>ZohoProjects.portals.READ, ZohoProjects.projects.READ, ZohoProjects.bugs.CREATE</code>
+                            Supports Zapier, Make, or any custom endpoint. Payload includes JSON with base64 images.
                         </p>
                     </div>
                 </div>
-             );
+            );
         default:
             return null;
     }
@@ -414,7 +381,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira': return '#0052CC';
         case 'Teams': return '#5059C9';
         case 'Asana': return '#F06A6A';
-        case 'Zoho': return '#0d9488'; // teal-600
+        case 'Webhook': return '#db2777'; // pink-600
         default: return '#3b82f6';
     }
   };
@@ -426,7 +393,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira': return <CreditCard size={20} />;
         case 'Teams': return <Users size={20} />;
         case 'Asana': return <CheckCircle2 size={20} />;
-        case 'Zoho': return <Database size={20} />;
+        case 'Webhook': return <Webhook size={20} />;
         default: return null;
     }
   };

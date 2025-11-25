@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { useToast } from './ToastProvider';
-import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Database } from 'lucide-react';
+import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook } from 'lucide-react';
 import { IntegrationModal } from './IntegrationModal';
 
 export const IntegrationsHub: React.FC = () => {
@@ -41,9 +41,8 @@ export const IntegrationsHub: React.FC = () => {
       } else if (source === 'Asana') {
           newConfig.asanaToken = undefined;
           newConfig.asanaWorkspaceId = undefined;
-      } else if (source === 'Zoho') {
-          newConfig.zohoToken = undefined;
-          newConfig.zohoDC = undefined;
+      } else if (source === 'Webhook') {
+          newConfig.webhookUrl = undefined;
       }
       
       setConfig(newConfig);
@@ -58,7 +57,7 @@ export const IntegrationsHub: React.FC = () => {
           case 'Jira': return !!config.jiraToken && !!config.jiraUrl && !!config.jiraEmail;
           case 'Teams': return !!config.teamsToken && !!config.teamsTeamId && !!config.teamsChannelId;
           case 'Asana': return !!config.asanaToken;
-          case 'Zoho': return !!config.zohoToken && !!config.zohoDC;
+          case 'Webhook': return !!config.webhookUrl;
       }
   };
 
@@ -220,32 +219,32 @@ export const IntegrationsHub: React.FC = () => {
                 )}
             </div>
 
-            {/* Zoho Card */}
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-teal-600 dark:hover:border-teal-600 transition-all group relative overflow-hidden">
-                {isConnected('Zoho') && (
+            {/* Webhook Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-pink-600 dark:hover:border-pink-600 transition-all group relative overflow-hidden">
+                {isConnected('Webhook') && (
                     <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
                         <CheckCircle2 size={12} /> CONNECTED
                     </div>
                 )}
-                <div className="w-14 h-14 bg-teal-600/10 dark:bg-teal-600/20 text-teal-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <Database size={32} />
+                <div className="w-14 h-14 bg-pink-600/10 dark:bg-pink-600/20 text-pink-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Webhook size={32} />
                 </div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Zoho Projects</h3>
-                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Create bugs in Zoho Projects Portals directly from screenshots.</p>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Custom Webhook</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Send bug reports to Zapier, Make, or any custom endpoint via JSON payload.</p>
                 
-                {isConnected('Zoho') ? (
+                {isConnected('Webhook') ? (
                      <button 
-                        onClick={() => handleDisconnect('Zoho')}
+                        onClick={() => handleDisconnect('Webhook')}
                         className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
                     >
                         <Trash2 size={16} /> Disconnect
                     </button>
                 ) : (
                     <button 
-                         onClick={() => setActiveModal('Zoho')}
-                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-teal-600 text-white hover:bg-teal-700 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                         onClick={() => setActiveModal('Webhook')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-pink-600 text-white hover:bg-pink-700 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
                     >
-                        Connect Zoho <ArrowRight size={16} />
+                        Configure Webhook <ArrowRight size={16} />
                     </button>
                 )}
             </div>

@@ -1,19 +1,21 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource, JiraExportMode, TeamsExportMode, AsanaExportMode, ZohoExportMode } from '../types';
+import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource, JiraExportMode, TeamsExportMode, AsanaExportMode, WebhookExportMode, ZohoSprintsExportMode } from '../types';
 import { refineBugReport } from '../services/geminiService';
 import { createClickUpTask, uploadClickUpAttachment, generateTaskDescription, generateMasterDescription } from '../services/clickUpService';
 import { postSlackMessage, uploadSlackFile, generateSlideMessage } from '../services/slackService';
 import { createJiraIssue, uploadJiraAttachment } from '../services/jiraService';
 import { postTeamsMessage } from '../services/teamsService';
 import { createAsanaTask, uploadAsanaAttachment } from '../services/asanaService';
-import { createZohoBug, uploadZohoAttachment } from '../services/zohoService';
+import { sendToWebhook } from '../services/webhookService';
+import { createZohoSprintsItem, uploadZohoSprintsAttachment } from '../services/zohoSprintsService';
 import { ClickUpModal } from './ClickUpModal';
 import { SlackModal } from './SlackModal';
 import { JiraModal } from './JiraModal';
 import { TeamsModal } from './TeamsModal';
 import { AsanaModal } from './AsanaModal';
-import { ZohoModal } from './ZohoModal';
+import { WebhookModal } from './WebhookModal';
+import { ZohoSprintsModal } from './ZohoSprintsModal';
 import { IntegrationModal } from './IntegrationModal';
 import { useToast } from './ToastProvider';
 import { jsPDF } from "jspdf";
@@ -43,7 +45,11 @@ import {
   CreditCard,
   Users,
   CheckCircle2,
-  Database
+  Webhook,
+  Database,
+  Share2,
+  ChevronDown,
+  Settings
 } from 'lucide-react';
 
 interface EditorProps {
@@ -73,6 +79,7 @@ export const Editor: React.FC<EditorProps> = ({
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const commentRefs = useRef<{ [key: number]: HTMLTextAreaElement | null }>({});
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
   const { addToast } = useToast();
   
   // Derived state
@@ -90,6 +97,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [aiLoadingId, setAiLoadingId] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
   
   // Interaction State
   const [resizeHandle, setResizeHandle] = useState<string | null>(null);
@@ -102,7 +110,8 @@ export const Editor: React.FC<EditorProps> = ({
   const [isJiraModalOpen, setIsJiraModalOpen] = useState(false);
   const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false);
   const [isAsanaModalOpen, setIsAsanaModalOpen] = useState(false);
-  const [isZohoModalOpen, setIsZohoModalOpen] = useState(false);
+  const [isWebhookModalOpen, setIsWebhookModalOpen] = useState(false);
+  const [isZohoSprintsModalOpen, setIsZohoSprintsModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
@@ -111,6 +120,9 @@ export const Editor: React.FC<EditorProps> = ({
   
   // Integration Modal State
   const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
+  
+  // Connected Integrations
+  const [connectedSources, setConnectedSources] = useState<IntegrationSource[]>([]);
 
   // Update local annotations when active slide changes
   useEffect(() => {
@@ -125,6 +137,26 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }, [activeSlideId, slides]);
 
+  // Load connected sources
+  useEffect(() => {
+      const checkConnections = () => {
+          const saved = localStorage.getItem('bugsnap_config');
+          if (saved) {
+              const config = JSON.parse(saved);
+              const connected: IntegrationSource[] = [];
+              if (config.clickUpToken) connected.push('ClickUp');
+              if (config.jiraToken) connected.push('Jira');
+              if (config.slackToken) connected.push('Slack');
+              if (config.teamsToken) connected.push('Teams');
+              if (config.asanaToken) connected.push('Asana');
+              if (config.webhookUrl) connected.push('Webhook');
+              if (config.zohoSprintsToken) connected.push('ZohoSprints');
+              setConnectedSources(connected);
+          }
+      };
+      checkConnections();
+  }, [isClickUpModalOpen, isJiraModalOpen, isSlackModalOpen, isTeamsModalOpen, isAsanaModalOpen, isWebhookModalOpen, isZohoSprintsModalOpen, integrationModalSource]);
+
   // Auto-focus new annotation comment
   useEffect(() => {
      if (annotations.length > 0) {
@@ -136,11 +168,14 @@ export const Editor: React.FC<EditorProps> = ({
      }
   }, [annotations.length]);
 
-  // Click outside listener for Add Menu
+  // Click outside listener for menus
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (isAddMenuOpen && addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
         setIsAddMenuOpen(false);
+      }
+      if (isExportDropdownOpen && exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
+        setIsExportDropdownOpen(false);
       }
     };
 
@@ -148,7 +183,7 @@ export const Editor: React.FC<EditorProps> = ({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isAddMenuOpen]);
+  }, [isAddMenuOpen, isExportDropdownOpen]);
 
 
   // --- Canvas Logic ---
@@ -347,6 +382,13 @@ export const Editor: React.FC<EditorProps> = ({
       onUpdateSlide({ ...activeSlide, annotations: updated });
       setSelectedAnnotationId(null);
     }
+  };
+
+  const handleDeleteAnnotation = (id: number) => {
+      const updated = annotations.filter(a => a.id !== id);
+      setAnnotations(updated);
+      onUpdateSlide({ ...activeSlide, annotations: updated });
+      if (selectedAnnotationId === id) setSelectedAnnotationId(null);
   };
 
   const handleCommentChange = (id: number, text: string) => {
@@ -610,15 +652,84 @@ export const Editor: React.FC<EditorProps> = ({
     });
   };
 
+  // Export Handlers...
+
+  const handleExportToWebhook = async (mode: WebhookExportMode, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) {
+          setExportError("Please configure Webhook in Integrations first.");
+          return;
+      }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.webhookUrl) {
+          setExportError("Missing Webhook URL.");
+          return;
+      }
+
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const blobToBase64 = (blob: Blob): Promise<string> => {
+              return new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => {
+                      const result = reader.result as string;
+                      resolve(result.split(',')[1]);
+                  };
+                  reader.onerror = reject;
+                  reader.readAsDataURL(blob);
+              });
+          };
+
+          const attachments = [];
+          let title = customTitle;
+          let description = customDescription;
+
+          if (mode === 'current') {
+              title = customTitle || activeSlide.name || 'Bug Report';
+              description = customDescription || generateTaskDescription(activeSlide);
+              const blob = await optimizeImage(activeSlide);
+              const base64 = await blobToBase64(blob);
+              attachments.push({ filename: 'report.jpg', mimeType: 'image/jpeg', content: base64 });
+          } else {
+              title = customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`;
+              description = customDescription || generateMasterDescription(slides);
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  const base64 = await blobToBase64(blob);
+                  attachments.push({ filename: `${slide.name}.jpg`, mimeType: 'image/jpeg', content: base64 });
+              }
+          }
+
+          await sendToWebhook(config.webhookUrl, {
+              title,
+              description,
+              source: 'BugSnap',
+              timestamp: new Date().toISOString(),
+              attachments
+          });
+
+          setIsWebhookModalOpen(false);
+          addToast("Sent to Webhook successfully!", 'success');
+
+      } catch (error) {
+          console.error(error);
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          setExportError(msg);
+          if (!msg.includes('corsdemo')) addToast(msg, 'error');
+      } finally {
+          setIsExporting(false);
+      }
+  };
+
   const handleGeneratePDF = async () => {
     setIsProcessing(true);
     addToast("Generating PDF...", "info");
-    
     try {
         const doc = new jsPDF({ orientation: 'landscape', unit: 'px', format: 'a4' });
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
-
         for (let i = 0; i < slides.length; i++) {
             if (i > 0) doc.addPage();
             const blob = await generateCompositeImage(slides[i]);
@@ -627,7 +738,6 @@ export const Editor: React.FC<EditorProps> = ({
                 reader.onloadend = () => resolve(reader.result as string);
                 reader.readAsDataURL(blob);
             });
-
             const imgProps = doc.getImageProperties(base64);
             const imgRatio = imgProps.width / imgProps.height;
             let w = pageWidth;
@@ -639,11 +749,7 @@ export const Editor: React.FC<EditorProps> = ({
         }
         doc.save(`BugSnap_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
         addToast("PDF Downloaded Successfully", "success");
-    } catch (err) {
-        addToast("Failed to generate PDF", "error");
-    } finally {
-        setIsProcessing(false);
-    }
+    } catch (err) { addToast("Failed to generate PDF", "error"); } finally { setIsProcessing(false); }
   };
 
   const handleCopySlide = async () => {
@@ -653,441 +759,190 @@ export const Editor: React.FC<EditorProps> = ({
         if (navigator.clipboard && navigator.clipboard.write) {
              await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
              addToast("Slide image copied to clipboard!", "success");
-        } else {
-            throw new Error("Clipboard API not supported");
-        }
-    } catch (err) {
-        addToast("Failed to copy image. Try using Chrome.", "error");
-    } finally {
-        setIsProcessing(false);
-    }
+        } else { throw new Error("Clipboard API not supported"); }
+    } catch (err) { addToast("Failed to copy image. Try using Chrome.", "error"); } finally { setIsProcessing(false); }
   };
 
-  const handleCopyAllText = () => {
-     setIsProcessing(true);
-     try {
-         const summary = generateMasterDescription(slides);
-         navigator.clipboard.writeText(summary);
-         addToast("Full report summary copied to clipboard!", "success");
-     } catch (err) {
-         addToast("Failed to copy text", "error");
-     } finally {
-         setIsProcessing(false);
-     }
-  };
-
-  // ClickUp Export Handler
   const handleExportToClickUp = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) {
-        setExportError("Please configure ClickUp in Integrations first.");
-        return;
-    }
+    if (!savedConfig) { setExportError("Please configure ClickUp in Integrations first."); return; }
     const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.clickUpToken) {
-        setExportError("Missing ClickUp Token in Integrations.");
-        return;
-    }
-
+    if (!config.clickUpToken) { setExportError("Missing ClickUp Token in Integrations."); return; }
     setIsExporting(true);
     try {
         let taskUrl = "";
         const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
         const ext = '.jpg';
-
         if (mode === 'current') {
-            const task = await createClickUpTask({
-                listId: listId,
-                token: config.clickUpToken,
-                title: customTitle || activeSlide.name || 'Bug Report',
-                description: customDescription || generateTaskDescription(activeSlide)
-            });
+            const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
             taskUrl = task.url;
-            
             const blob = await optimizeImage(activeSlide);
             await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
-        } 
-        else if (mode === 'all_attachments') {
-            const masterTask = await createClickUpTask({
-                listId: listId,
-                token: config.clickUpToken,
-                title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
-                description: customDescription || generateMasterDescription(slides)
-            });
+        } else if (mode === 'all_attachments') {
+            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
             taskUrl = masterTask.url;
-
             for (const slide of slides) {
                 const blob = await optimizeImage(slide);
                 await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
             }
-        }
-        else if (mode === 'all_subtasks') {
-            const masterTask = await createClickUpTask({
-                listId: listId,
-                token: config.clickUpToken,
-                title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
-                description: customDescription || generateMasterDescription(slides)
-            });
+        } else if (mode === 'all_subtasks') {
+            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
             taskUrl = masterTask.url;
-
             for (const slide of slides) {
-                const subTask = await createClickUpTask({
-                    listId: listId,
-                    token: config.clickUpToken,
-                    title: slide.name || 'Slide Issue',
-                    description: generateTaskDescription(slide),
-                    parentId: masterTask.id
-                });
-                
+                const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
                 const blob = await optimizeImage(slide);
                 await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
             }
         }
-
         setIsClickUpModalOpen(false);
         setCreatedTaskUrl(taskUrl);
         setCreatedTaskPlatform('ClickUp');
-
-    } catch (error) {
-        console.error(error);
-        const msg = error instanceof Error ? error.message : 'Unknown error';
-        setExportError(msg);
-        if (!msg.includes('corsdemo')) {
-            addToast(msg, 'error');
-        }
-    } finally {
-        setIsExporting(false);
-    }
+    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
-  // Jira Export Handler
   const handleExportToJira = async (mode: JiraExportMode, projectId: string, issueTypeId: string, customTitle: string, customDescription: string) => {
       setExportError(null);
       const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) {
-          setExportError("Please configure Jira in Integrations first.");
-          return;
-      }
+      if (!savedConfig) { setExportError("Please configure Jira in Integrations first."); return; }
       const config: IntegrationConfig = JSON.parse(savedConfig);
-      if (!config.jiraToken || !config.jiraUrl || !config.jiraEmail) {
-          setExportError("Missing Jira configuration.");
-          return;
-      }
-
+      if (!config.jiraToken || !config.jiraUrl || !config.jiraEmail) { setExportError("Missing Jira configuration."); return; }
       setIsExporting(true);
       try {
           const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
           const ext = '.jpg';
           const creds = { domain: config.jiraUrl, email: config.jiraEmail, token: config.jiraToken };
-
-          let issueKey = "";
-          let issueUrl = "";
-
+          let issueKey = ""; let issueUrl = "";
           if (mode === 'current') {
-              const issue = await createJiraIssue(creds, {
-                  projectId,
-                  issueTypeId,
-                  title: customTitle || activeSlide.name || 'Bug Report',
-                  description: customDescription || generateTaskDescription(activeSlide)
-              });
-              issueKey = issue.key;
-              issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
-              
+              const issue = await createJiraIssue(creds, { projectId, issueTypeId, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
+              issueKey = issue.key; issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
               const blob = await optimizeImage(activeSlide);
               await uploadJiraAttachment(creds, issue.id, blob, `report${ext}`);
-          }
-          else if (mode === 'all_attachments') {
-              const issue = await createJiraIssue(creds, {
-                  projectId,
-                  issueTypeId,
-                  title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
-                  description: customDescription || generateMasterDescription(slides)
-              });
-              issueKey = issue.key;
-              issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
-
+          } else if (mode === 'all_attachments') {
+              const issue = await createJiraIssue(creds, { projectId, issueTypeId, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
+              issueKey = issue.key; issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
               for (const slide of slides) {
                   const blob = await optimizeImage(slide);
                   await uploadJiraAttachment(creds, issue.id, blob, `${slide.name}${ext}`);
               }
           }
-
           setIsJiraModalOpen(false);
           setCreatedTaskUrl(issueUrl);
           setCreatedTaskPlatform('Jira');
-
-      } catch (error) {
-          console.error(error);
-          const msg = error instanceof Error ? error.message : 'Unknown error';
-          setExportError(msg);
-          if (!msg.includes('corsdemo')) {
-              addToast(msg, 'error');
-          }
-      } finally {
-          setIsExporting(false);
-      }
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
-  // Microsoft Teams Export Handler
   const handleExportToTeams = async (mode: TeamsExportMode) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) {
-        setExportError("Please configure Teams in Integrations first.");
-        return;
-    }
+    if (!savedConfig) { setExportError("Please configure Teams in Integrations first."); return; }
     const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.teamsToken || !config.teamsTeamId || !config.teamsChannelId) {
-        setExportError("Missing Teams configuration in Integrations.");
-        return;
-    }
-
+    if (!config.teamsToken || !config.teamsTeamId || !config.teamsChannelId) { setExportError("Missing Teams configuration in Integrations."); return; }
     setIsExporting(true);
     try {
-        if (mode === 'current') {
-             await postTeamsMessage(
-                { token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId },
-                activeSlide
-             );
-        }
-        else if (mode === 'summary') {
-             await postTeamsMessage(
-                { token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId },
-                undefined,
-                generateMasterDescription(slides)
-             );
-        }
-
+        if (mode === 'current') { await postTeamsMessage({ token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId }, activeSlide); }
+        else if (mode === 'summary') { await postTeamsMessage({ token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId }, undefined, generateMasterDescription(slides)); }
         setIsTeamsModalOpen(false);
         addToast("Shared to Teams Successfully!", 'success');
-
-    } catch (error) {
-        console.error(error);
-        const msg = error instanceof Error ? error.message : 'Unknown error';
-        setExportError(msg);
-         if (!msg.includes('corsdemo')) {
-            addToast(msg, 'error');
-        }
-    } finally {
-        setIsExporting(false);
-    }
+    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
-  // Asana Export Handler
   const handleExportToAsana = async (mode: AsanaExportMode, workspaceId: string, projectId: string, customTitle: string, customDescription: string) => {
       setExportError(null);
       const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) {
-          setExportError("Please configure Asana in Integrations first.");
-          return;
-      }
+      if (!savedConfig) { setExportError("Please configure Asana in Integrations first."); return; }
       const config: IntegrationConfig = JSON.parse(savedConfig);
-      if (!config.asanaToken) {
-          setExportError("Missing Asana Personal Access Token.");
-          return;
-      }
-
+      if (!config.asanaToken) { setExportError("Missing Asana Personal Access Token."); return; }
       setIsExporting(true);
       try {
           const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
           const ext = '.jpg';
-          
           let taskUrl = "";
-
           if (mode === 'current') {
-              const task = await createAsanaTask(
-                  config.asanaToken,
-                  workspaceId,
-                  projectId,
-                  customTitle || activeSlide.name || 'Bug Report',
-                  customDescription || generateTaskDescription(activeSlide)
-              );
+              const task = await createAsanaTask(config.asanaToken, workspaceId, projectId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
               taskUrl = task.permalink_url;
-              
               const blob = await optimizeImage(activeSlide);
               await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `report${ext}`);
-          }
-          else if (mode === 'all_attachments') {
-              const task = await createAsanaTask(
-                  config.asanaToken,
-                  workspaceId,
-                  projectId,
-                  customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`,
-                  customDescription || generateMasterDescription(slides)
-              );
+          } else if (mode === 'all_attachments') {
+              const task = await createAsanaTask(config.asanaToken, workspaceId, projectId, customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
               taskUrl = task.permalink_url;
-
               for (const slide of slides) {
                   const blob = await optimizeImage(slide);
                   await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `${slide.name}${ext}`);
               }
           }
-
           setIsAsanaModalOpen(false);
           setCreatedTaskUrl(taskUrl);
           setCreatedTaskPlatform('Asana');
-
-      } catch (error) {
-          console.error(error);
-          const msg = error instanceof Error ? error.message : 'Unknown error';
-          setExportError(msg);
-          if (!msg.includes('corsdemo')) {
-              addToast(msg, 'error');
-          }
-      } finally {
-          setIsExporting(false);
-      }
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
-  // Zoho Export Handler
-  const handleExportToZoho = async (mode: ZohoExportMode, portalId: string, projectId: string, customTitle: string, customDescription: string) => {
+  const handleExportToZohoSprints = async (mode: ZohoSprintsExportMode, teamId: string, projectId: string, itemTypeId: string, customTitle: string, customDescription: string) => {
       setExportError(null);
       const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) {
-          setExportError("Please configure Zoho in Integrations first.");
-          return;
-      }
+      if (!savedConfig) { setExportError("Please configure Zoho Sprints in Integrations first."); return; }
       const config: IntegrationConfig = JSON.parse(savedConfig);
-      if (!config.zohoToken || !config.zohoDC) {
-          setExportError("Missing Zoho configuration.");
-          return;
-      }
-
+      if (!config.zohoSprintsToken || !config.zohoSprintsDC) { setExportError("Missing Zoho Sprints configuration."); return; }
       setIsExporting(true);
       try {
           const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
           const ext = '.jpg';
+          let itemUrl = "";
           
-          let taskUrl = "";
-
           if (mode === 'current') {
-              const bug = await createZohoBug(
-                  config.zohoDC,
-                  config.zohoToken,
-                  portalId,
-                  projectId,
-                  customTitle || activeSlide.name || 'Bug Report',
-                  customDescription || generateTaskDescription(activeSlide)
-              );
-              taskUrl = bug.link?.self || '#';
-              
+              const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
+              // item might contain a link or ID. Construction of link depends on data center.
+              // Simple fallback if no link: just success.
               const blob = await optimizeImage(activeSlide);
-              // Bug ID from Zoho response might be 'id' or 'id_string'
-              const bugId = bug.id_string || bug.id;
-              await uploadZohoAttachment(config.zohoDC, config.zohoToken, portalId, projectId, bugId, blob, `report${ext}`);
-          }
-          else if (mode === 'all_attachments') {
-              const bug = await createZohoBug(
-                  config.zohoDC,
-                  config.zohoToken,
-                  portalId,
-                  projectId,
-                  customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`,
-                  customDescription || generateMasterDescription(slides)
-              );
-              taskUrl = bug.link?.self || '#';
-              const bugId = bug.id_string || bug.id;
-
+              await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `report${ext}`);
+          } else if (mode === 'all_attachments') {
+              const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || `Bug Report - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
               for (const slide of slides) {
                   const blob = await optimizeImage(slide);
-                  await uploadZohoAttachment(config.zohoDC, config.zohoToken, portalId, projectId, bugId, blob, `${slide.name}${ext}`);
+                  await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `${slide.name}${ext}`);
               }
           }
-
-          setIsZohoModalOpen(false);
-          setCreatedTaskUrl(taskUrl);
-          setCreatedTaskPlatform('Zoho');
-
-      } catch (error) {
-          console.error(error);
-          const msg = error instanceof Error ? error.message : 'Unknown error';
-          setExportError(msg);
-          if (!msg.includes('corsdemo')) {
-              addToast(msg, 'error');
-          }
-      } finally {
-          setIsExporting(false);
-      }
+          
+          setIsZohoSprintsModalOpen(false);
+          // Sprints API doesn't always return a direct URL easily constructed without domain logic
+          // We'll just show success for "Zoho Sprints"
+          setCreatedTaskUrl("https://sprints.zoho.com"); // Generic fallback
+          setCreatedTaskPlatform('Zoho Sprints');
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
   const handleExportToSlack = async (mode: SlackExportMode) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) {
-        setExportError("Please configure Slack in Integrations first.");
-        return;
-    }
+    if (!savedConfig) { setExportError("Please configure Slack in Integrations first."); return; }
     const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.slackToken || !config.slackChannel) {
-        setExportError("Missing Slack Bot Token or Channel ID in Integrations.");
-        return;
-    }
-
+    if (!config.slackToken || !config.slackChannel) { setExportError("Missing Slack Bot Token or Channel ID in Integrations."); return; }
     setIsExporting(true);
     try {
         if (mode === 'current') {
             const blob = await generateCompositeImage(activeSlide);
-            await uploadSlackFile(
-                config.slackToken,
-                config.slackChannel,
-                blob,
-                'bug_report.png',
-                activeSlide.name || 'Bug Report'
-            );
+            await uploadSlackFile(config.slackToken, config.slackChannel, blob, 'bug_report.png', activeSlide.name || 'Bug Report');
             await postSlackMessage(config.slackToken, config.slackChannel, generateSlideMessage(activeSlide));
-        }
-        else if (mode === 'all_files') {
+        } else if (mode === 'all_files') {
             for (const slide of slides) {
                 const blob = await generateCompositeImage(slide);
-                await uploadSlackFile(
-                    config.slackToken,
-                    config.slackChannel,
-                    blob,
-                    `${slide.name}.png`,
-                    slide.name
-                );
+                await uploadSlackFile(config.slackToken, config.slackChannel, blob, `${slide.name}.png`, slide.name);
             }
             await postSlackMessage(config.slackToken, config.slackChannel, `Uploaded ${slides.length} bug reports.`);
-        }
-        else if (mode === 'thread') {
-            const threadTs = await postSlackMessage(
-                config.slackToken,
-                config.slackChannel,
-                `*Bug Report Session - ${new Date().toLocaleString()}*\nContains ${slides.length} issues.`
-            );
-
+        } else if (mode === 'thread') {
+            const threadTs = await postSlackMessage(config.slackToken, config.slackChannel, `*Bug Report Session - ${new Date().toLocaleString()}*\nContains ${slides.length} issues.`);
             for (const slide of slides) {
                 const blob = await generateCompositeImage(slide);
-                await uploadSlackFile(
-                    config.slackToken,
-                    config.slackChannel,
-                    blob,
-                    `${slide.name}.png`,
-                    slide.name,
-                    threadTs
-                );
+                await uploadSlackFile(config.slackToken, config.slackChannel, blob, `${slide.name}.png`, slide.name, threadTs);
             }
         }
-
         setIsSlackModalOpen(false);
         addToast("Shared to Slack Successfully!", 'success');
-
-    } catch (error) {
-        console.error(error);
-        const msg = error instanceof Error ? error.message : 'Unknown error';
-        setExportError(msg);
-         if (!msg.includes('corsdemo')) {
-            addToast(msg, 'error');
-        }
-    } finally {
-        setIsExporting(false);
-    }
+    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
   const activeIndex = slides.findIndex(s => s.id === activeSlideId);
 
-  // --- Close Confirmation Dialog ---
   const CloseConfirmation = () => {
       if (!showCloseConfirm) return null;
       return (
@@ -1121,7 +976,6 @@ export const Editor: React.FC<EditorProps> = ({
       )
   }
 
-  // --- Success Modal ---
   const SuccessModal = () => {
       if (!createdTaskUrl) return null;
       return (
@@ -1154,6 +1008,43 @@ export const Editor: React.FC<EditorProps> = ({
       )
   }
 
+  const openModalFor = (source: IntegrationSource) => {
+      if (source === 'ClickUp') setIsClickUpModalOpen(true);
+      if (source === 'Jira') setIsJiraModalOpen(true);
+      if (source === 'Slack') setIsSlackModalOpen(true);
+      if (source === 'Teams') setIsTeamsModalOpen(true);
+      if (source === 'Asana') setIsAsanaModalOpen(true);
+      if (source === 'Webhook') setIsWebhookModalOpen(true);
+      if (source === 'ZohoSprints') setIsZohoSprintsModalOpen(true);
+      setIsExportDropdownOpen(false);
+  };
+
+  const getSourceIcon = (source: IntegrationSource) => {
+      switch(source) {
+          case 'ClickUp': return <Layers size={16} />;
+          case 'Jira': return <CreditCard size={16} />;
+          case 'Slack': return <Share2 size={16} />;
+          case 'Teams': return <Users size={16} />;
+          case 'Asana': return <CheckCircle2 size={16} />;
+          case 'Webhook': return <Webhook size={16} />;
+          case 'ZohoSprints': return <Database size={16} />;
+          default: return <Share2 size={16} />;
+      }
+  };
+
+  const getSourceColor = (source: IntegrationSource) => {
+      switch(source) {
+          case 'ClickUp': return 'bg-[#7B68EE] hover:bg-[#6c5ce7]'; // ClickUp Purple
+          case 'Jira': return 'bg-[#0052CC] hover:bg-[#0747A6]';
+          case 'Slack': return 'bg-[#4A154B] hover:bg-[#3f1240]';
+          case 'Teams': return 'bg-[#5059C9] hover:bg-[#434aa8]';
+          case 'Asana': return 'bg-[#F06A6A] hover:bg-[#e05a5a]';
+          case 'Webhook': return 'bg-pink-600 hover:bg-pink-700';
+          case 'ZohoSprints': return 'bg-teal-500 hover:bg-teal-600';
+          default: return 'bg-blue-600 hover:bg-blue-700';
+      }
+  };
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-[#0f0f0f] relative transition-colors">
       <CloseConfirmation />
@@ -1172,10 +1063,7 @@ export const Editor: React.FC<EditorProps> = ({
 
       <ClickUpModal 
         isOpen={isClickUpModalOpen} 
-        onClose={() => {
-            setIsClickUpModalOpen(false);
-            setExportError(null);
-        }}
+        onClose={() => { setIsClickUpModalOpen(false); setExportError(null); }}
         onExport={handleExportToClickUp}
         loading={isExporting}
         slides={slides}
@@ -1186,10 +1074,7 @@ export const Editor: React.FC<EditorProps> = ({
       
       <SlackModal 
         isOpen={isSlackModalOpen}
-        onClose={() => {
-            setIsSlackModalOpen(false);
-            setExportError(null);
-        }}
+        onClose={() => { setIsSlackModalOpen(false); setExportError(null); }}
         onExport={handleExportToSlack}
         loading={isExporting}
         slides={slides}
@@ -1199,10 +1084,7 @@ export const Editor: React.FC<EditorProps> = ({
 
       <JiraModal 
         isOpen={isJiraModalOpen}
-        onClose={() => {
-            setIsJiraModalOpen(false);
-            setExportError(null);
-        }}
+        onClose={() => { setIsJiraModalOpen(false); setExportError(null); }}
         onExport={handleExportToJira}
         loading={isExporting}
         slides={slides}
@@ -1213,10 +1095,7 @@ export const Editor: React.FC<EditorProps> = ({
       
       <TeamsModal
         isOpen={isTeamsModalOpen}
-        onClose={() => {
-            setIsTeamsModalOpen(false);
-            setExportError(null);
-        }}
+        onClose={() => { setIsTeamsModalOpen(false); setExportError(null); }}
         onExport={handleExportToTeams}
         loading={isExporting}
         slides={slides}
@@ -1226,10 +1105,7 @@ export const Editor: React.FC<EditorProps> = ({
       
       <AsanaModal
         isOpen={isAsanaModalOpen}
-        onClose={() => {
-            setIsAsanaModalOpen(false);
-            setExportError(null);
-        }}
+        onClose={() => { setIsAsanaModalOpen(false); setExportError(null); }}
         onExport={handleExportToAsana}
         loading={isExporting}
         slides={slides}
@@ -1238,18 +1114,26 @@ export const Editor: React.FC<EditorProps> = ({
         onConfigure={() => { setIsAsanaModalOpen(false); setIntegrationModalSource('Asana'); }}
       />
 
-      <ZohoModal
-        isOpen={isZohoModalOpen}
-        onClose={() => {
-            setIsZohoModalOpen(false);
-            setExportError(null);
-        }}
-        onExport={handleExportToZoho}
+      <WebhookModal
+        isOpen={isWebhookModalOpen}
+        onClose={() => { setIsWebhookModalOpen(false); setExportError(null); }}
+        onExport={handleExportToWebhook}
         loading={isExporting}
         slides={slides}
         activeSlideId={activeSlideId}
         error={exportError}
-        onConfigure={() => { setIsZohoModalOpen(false); setIntegrationModalSource('Zoho'); }}
+        onConfigure={() => { setIsWebhookModalOpen(false); setIntegrationModalSource('Webhook'); }}
+      />
+
+      <ZohoSprintsModal
+        isOpen={isZohoSprintsModalOpen}
+        onClose={() => { setIsZohoSprintsModalOpen(false); setExportError(null); }}
+        onExport={handleExportToZohoSprints}
+        loading={isExporting}
+        slides={slides}
+        activeSlideId={activeSlideId}
+        error={exportError}
+        onConfigure={() => { setIsZohoSprintsModalOpen(false); setIntegrationModalSource('ZohoSprints'); }}
       />
 
       {/* Toolbar */}
@@ -1342,44 +1226,66 @@ export const Editor: React.FC<EditorProps> = ({
            
            <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
            
-           <div className="flex gap-2">
-                <button 
-                        onClick={() => setIsTeamsModalOpen(true)}
-                        className="flex items-center gap-1.5 bg-[#5059C9] hover:bg-[#434aa8] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-                    >
-                    <Users size={14} /> Teams
-                </button>
-                <button 
-                    onClick={() => setIsJiraModalOpen(true)}
-                    className="flex items-center gap-1.5 bg-[#0052CC] hover:bg-[#0747A6] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-                >
-                <CreditCard size={14} /> Jira
-                </button>
-                <button 
-                        onClick={() => setIsClickUpModalOpen(true)}
-                        className="flex items-center gap-1.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-                    >
-                    <Layers size={14} /> ClickUp
-                </button>
-                <button 
-                        onClick={() => setIsAsanaModalOpen(true)}
-                        className="flex items-center gap-1.5 bg-[#F06A6A] hover:bg-[#e05a5a] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-                    >
-                    <CheckCircle2 size={14} /> Asana
-                </button>
-                <button 
-                        onClick={() => setIsZohoModalOpen(true)}
-                        className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
-                    >
-                    <Database size={14} /> Zoho
-                </button>
+           {/* Dynamic Export Button */}
+           <div className="relative" ref={exportDropdownRef}>
+               {connectedSources.length === 0 ? (
+                   <button 
+                        onClick={() => setIntegrationModalSource('ClickUp')} // Open Integrations generally
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-[#272727] dark:hover:bg-[#333] text-slate-700 dark:text-zinc-200 text-xs font-bold rounded-lg transition-colors"
+                   >
+                       <Settings size={16} /> Connect Tools
+                   </button>
+               ) : connectedSources.length === 1 ? (
+                   <button 
+                        onClick={() => openModalFor(connectedSources[0])}
+                        className={`flex items-center gap-2 px-4 py-2 text-white text-xs font-bold rounded-lg shadow-sm transition-colors ${getSourceColor(connectedSources[0])}`}
+                   >
+                       {getSourceIcon(connectedSources[0])}
+                       Export to {connectedSources[0]}
+                   </button>
+               ) : (
+                   <>
+                       <button 
+                            onClick={() => setIsExportDropdownOpen(!isExportDropdownOpen)}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors"
+                       >
+                           <Share2 size={16} />
+                           Export
+                           <ChevronDown size={14} className={`transition-transform ${isExportDropdownOpen ? 'rotate-180' : ''}`} />
+                       </button>
+                       {isExportDropdownOpen && (
+                           <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-xl border border-slate-200 dark:border-[#272727] overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
+                               <div className="p-1">
+                                   {connectedSources.map(source => (
+                                       <button 
+                                            key={source}
+                                            onClick={() => openModalFor(source)}
+                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg transition-colors"
+                                       >
+                                           <div className="text-slate-500 dark:text-zinc-400">{getSourceIcon(source)}</div>
+                                           {source}
+                                       </button>
+                                   ))}
+                               </div>
+                               <div className="border-t border-slate-100 dark:border-[#272727] p-1 bg-slate-50 dark:bg-[#121212]">
+                                   <button 
+                                        onClick={() => { setIsExportDropdownOpen(false); setIntegrationModalSource('ClickUp'); }} // Re-open integrations
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-slate-200 dark:hover:bg-[#333] rounded-lg transition-colors"
+                                   >
+                                       <Settings size={14} /> Manage Integrations
+                                   </button>
+                               </div>
+                           </div>
+                       )}
+                   </>
+               )}
            </div>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar */}
-        <div className="w-24 bg-white dark:bg-[#0f0f0f] border-r border-slate-200 dark:border-[#272727] flex flex-col py-4 relative shrink-0 transition-colors">
+        <div className="w-24 bg-white dark:bg-[#0f0f0f] border-r border-slate-200 dark:border-[#272727] flex flex-col py-4 relative shrink-0 transition-colors z-10">
            <div className="flex-1 overflow-y-auto flex flex-col items-center gap-3 px-1 no-scrollbar">
              {slides.map((s, i) => (
                <div 
@@ -1409,18 +1315,20 @@ export const Editor: React.FC<EditorProps> = ({
                  </button>
                </div>
              ))}
-             
-             {/* Sticky Add Button - Positioned directly next to slides */}
-             <div className="sticky bottom-0 w-full flex justify-center pb-2 pt-2 bg-white dark:bg-[#0f0f0f] z-10" ref={addMenuRef}>
-                {isAddMenuOpen && (
-                   <div className="absolute bottom-full left-1 mb-2 w-44 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-xl border border-slate-200 dark:border-[#272727] p-1 flex flex-col gap-1 z-50 animate-in slide-in-from-bottom-2 overflow-hidden">
-                       <button onClick={() => { setIsAddMenuOpen(false); onCaptureScreen(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-blue-600 dark:hover:text-blue-400 transition-colors"><Camera size={16} className="text-blue-500 dark:text-blue-400" /> Capture Screen</button>
-                       <button onClick={() => { setIsAddMenuOpen(false); onRecordVideo(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-purple-600 dark:hover:text-purple-400 transition-colors"><Video size={16} className="text-purple-500 dark:text-purple-400" /> Record Video</button>
-                       <button onClick={() => { setIsAddMenuOpen(false); onAddSlide(); }} className="flex items-center gap-3 px-3 py-2 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"><Upload size={16} className="text-emerald-500 dark:text-emerald-400" /> Upload File</button>
-                   </div>
-                )}
-                <button onClick={() => setIsAddMenuOpen(!isAddMenuOpen)} className={`w-14 h-14 border-2 border-dashed rounded-xl flex items-center justify-center transition-all shadow-sm bg-white dark:bg-[#1e1e1e] ${isAddMenuOpen ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-[#3f3f3f] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-[#272727]'}`}><Plus size={24} className={isAddMenuOpen ? 'rotate-45 transition-transform' : 'transition-transform'} /></button>
-             </div>
+           </div>
+           
+           {/* Static Add Button (Outside Scroll) */}
+           <div className="w-full flex justify-center pt-4 pb-2 bg-white dark:bg-[#0f0f0f]" ref={addMenuRef}>
+                <div className="relative">
+                    {isAddMenuOpen && (
+                    <div className="absolute bottom-full left-0 mb-2 w-48 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-xl border border-slate-200 dark:border-[#272727] p-1 flex flex-col gap-1 z-50 animate-in slide-in-from-bottom-2 overflow-hidden">
+                        <button onClick={() => { setIsAddMenuOpen(false); onCaptureScreen(); }} className="flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-blue-600 dark:hover:text-blue-400 transition-colors whitespace-nowrap"><Camera size={16} className="text-blue-500 dark:text-blue-400" /> Capture Screen</button>
+                        <button onClick={() => { setIsAddMenuOpen(false); onRecordVideo(); }} className="flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-purple-600 dark:hover:text-purple-400 transition-colors whitespace-nowrap"><Video size={16} className="text-purple-500 dark:text-purple-400" /> Record Video</button>
+                        <button onClick={() => { setIsAddMenuOpen(false); onAddSlide(); }} className="flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors whitespace-nowrap"><Upload size={16} className="text-emerald-500 dark:text-emerald-400" /> Upload File</button>
+                    </div>
+                    )}
+                    <button onClick={() => setIsAddMenuOpen(!isAddMenuOpen)} className={`w-14 h-14 border-2 border-dashed rounded-xl flex items-center justify-center transition-all shadow-sm bg-white dark:bg-[#1e1e1e] ${isAddMenuOpen ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-[#3f3f3f] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-[#272727]'}`}><Plus size={24} className={isAddMenuOpen ? 'rotate-45 transition-transform' : 'transition-transform'} /></button>
+                </div>
            </div>
         </div>
 
@@ -1499,15 +1407,21 @@ export const Editor: React.FC<EditorProps> = ({
                               <button onClick={(e) => { e.stopPropagation(); handleAiRefine(ann.id); }} className="p-1 text-slate-400 hover:text-purple-600 transition-colors rounded hover:bg-purple-50 dark:hover:bg-purple-900/20" title="Refine with AI">
                                   {aiLoadingId === ann.id ? <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /> : <Wand2 size={14} />}
                               </button>
-                              <button onClick={(e) => { e.stopPropagation(); onDeleteSlide(activeSlideId); /* Just delete annotation really? No logic passed for that */ handleDeleteSelected(); }} className="p-1 text-slate-400 hover:text-red-600 transition-colors rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                              <button 
+                                  onClick={(e) => { 
+                                      e.stopPropagation(); 
+                                      handleDeleteAnnotation(ann.id); 
+                                  }} 
+                                  className="p-1 text-slate-400 hover:text-red-600 transition-colors rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                              >
                                   <Trash2 size={14} />
                               </button>
                           </div>
                       </div>
                       <textarea 
                           ref={(el) => { commentRefs.current[ann.id] = el; }}
-                          className="w-full text-sm bg-transparent border-none p-0 focus:ring-0 resize-none text-slate-700 dark:text-zinc-200 placeholder-slate-400"
-                          rows={2}
+                          className="w-full text-sm bg-transparent border-none p-0 focus:ring-0 resize-y min-h-[100px] text-slate-700 dark:text-zinc-200 placeholder-slate-400"
+                          rows={4}
                           placeholder="Describe the issue..."
                           value={ann.comment}
                           onChange={(e) => handleCommentChange(ann.id, e.target.value)}

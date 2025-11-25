@@ -51,6 +51,58 @@ export const validateZohoToken = async (dc: string, token: string): Promise<bool
 };
 
 /**
+ * Exchanges a Self-Client Authorization Code for an Access Token.
+ */
+export const exchangeZohoCodeForToken = async (dc: string, clientId: string, clientSecret: string, code: string): Promise<string> => {
+    let accountsUrl = 'https://accounts.zoho.com';
+    if (dc === 'eu') accountsUrl = 'https://accounts.zoho.eu';
+    if (dc === 'in') accountsUrl = 'https://accounts.zoho.in';
+    if (dc === 'com.au') accountsUrl = 'https://accounts.zoho.com.au';
+    if (dc === 'jp') accountsUrl = 'https://accounts.zoho.jp';
+
+    const url = `${accountsUrl}/oauth/v2/token`;
+    
+    const params = new URLSearchParams();
+    params.append('code', code);
+    params.append('client_id', clientId);
+    params.append('client_secret', clientSecret);
+    params.append('grant_type', 'authorization_code');
+    // Note: redirect_uri is typically optional for Self-Client codes, or assumed to be the console.
+    
+    try {
+        const response = await fetchWithProxy(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        });
+
+        if (!response.ok) {
+             const text = await response.text();
+             if (text.includes('corsdemo')) throw new Error('corsdemo_required');
+             
+             try {
+                const json = JSON.parse(text);
+                if (json.error) throw new Error(`Zoho Exchange Error: ${json.error}`);
+             } catch(e) { /* ignore */ }
+             
+             throw new Error(`Zoho Token Exchange Failed: ${text}`);
+        }
+
+        const data = await response.json();
+        if (data.error) {
+             throw new Error(`Zoho Exchange Error: ${data.error}`);
+        }
+        
+        return data.access_token;
+    } catch (error) {
+        console.error("Zoho Token Exchange Failed:", error);
+        throw error;
+    }
+};
+
+/**
  * Get all portals for the user
  */
 export const getZohoPortals = async (dc: string, token: string): Promise<ZohoPortal[]> => {

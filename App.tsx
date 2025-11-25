@@ -8,15 +8,10 @@ import { IntegrationsHub } from './components/IntegrationsHub';
 import { useToast } from './components/ToastProvider';
 import { 
   LogOut, 
-  Bug,
   Monitor,
-  AlertTriangle,
-  Copy,
-  Check,
   Camera,
   Video,
   Upload,
-  StopCircle,
   LayoutTemplate,
   Zap,
   ExternalLink,
@@ -26,7 +21,9 @@ import {
   PenTool,
   User as UserIcon,
   Moon,
-  Sun
+  Sun,
+  Plus,
+  Trash2
 } from 'lucide-react';
 
 // REPLACE WITH YOUR ACTUAL GOOGLE CLIENT ID FROM GOOGLE CLOUD CONSOLE
@@ -235,6 +232,10 @@ const App: React.FC = () => {
   const pipRootRef = useRef<ReactDOM.Root | null>(null); // React Root for PIP
   const [isFloatingSnapping, setIsFloatingSnapping] = useState(false);
 
+  // UI State for Menu
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { addToast } = useToast();
 
@@ -264,6 +265,20 @@ const App: React.FC = () => {
   useEffect(() => {
     setIsInIframe(window.self !== window.top);
   }, []);
+
+  // Click outside listener for menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isAddMenuOpen && addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
+        setIsAddMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAddMenuOpen]);
 
   // --- Auth Logic ---
 
@@ -687,6 +702,12 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCloseSession = () => {
+      setSlides([]);
+      setActiveSlideId(null);
+      setView(AppView.DASHBOARD);
+  };
+
   const NavButton = ({ active, onClick, icon: Icon, children }: any) => (
     <button
       onClick={onClick}
@@ -869,7 +890,7 @@ const App: React.FC = () => {
                        const newSlides = slides.filter(s => s.id !== id);
                        setSlides(newSlides);
                        if (newSlides.length === 0) {
-                           setView(AppView.DASHBOARD);
+                           setActiveSlideId(null); // Keep in Editor view with empty state
                        } else if (activeSlideId === id) {
                            setActiveSlideId(newSlides[0].id);
                        }
@@ -877,7 +898,24 @@ const App: React.FC = () => {
                    onAddSlide={() => fileInputRef.current?.click()}
                    onCaptureScreen={handleCaptureClick}
                    onRecordVideo={handleVideoRecord}
-                   onClose={() => setView(AppView.DASHBOARD)}
+                   onClose={handleCloseSession}
+                   // Pass props to control the new sidebar add button logic if needed, or just handle via Editor internal state if moved here.
+                   // Wait, Editor handles layout. The sidebar is INSIDE Editor component in my provided file structure?
+                   // NO. App.tsx handles the sidebar if view === EDITOR?
+                   // Actually, looking at the provided App.tsx, the Editor component HAS the sidebar inside it.
+                   // Wait, let me double check where the sidebar code is.
+                   // "const Editor: React.FC<EditorProps> = ..." in components/Editor.tsx HAS the sidebar.
+                   // BUT in the App.tsx file I am editing, the App component ALSO has a sidebar structure if I look closely?
+                   // No, the provided App.tsx just renders <Editor ... />.
+                   // Ah, wait. The file content provided for App.tsx in the PROMPT shows the sidebar logic INSIDE App.tsx?
+                   // Let me re-read the App.tsx provided in the prompt.
+                   // NO. The App.tsx in the prompt just renders <Editor />.
+                   // The SIDEBAR code is in components/Editor.tsx.
+                   // I need to update components/Editor.tsx, NOT App.tsx?
+                   // Let me check the file list provided.
+                   // "START OF FILE components/Editor.tsx"
+                   // Yes, the sidebar is in Editor.tsx.
+                   // I must update Editor.tsx.
                  />
                )}
                {view === AppView.INTEGRATIONS && <IntegrationsHub />}
