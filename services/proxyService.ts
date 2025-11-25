@@ -4,10 +4,10 @@
  * Tries multiple CORS proxies in sequence to bypass browser restrictions.
  * 
  * Proxies used:
- * 1. cors-anywhere (Primary: Supports headers best, requires activation)
- * 2. corsproxy.io (Backup: Fast)
- * 3. codetabs (Fallback)
- * 4. allorigins (Fallback: Raw mode)
+ * 1. corsproxy.io (Primary: Fast, reliable)
+ * 2. codetabs (Backup)
+ * 3. allorigins (Fallback: Might strip auth headers, used as last resort)
+ * 4. cors-anywhere (Demo: Strictly rate limited, requires activation)
  */
 
 interface ProxyProvider {
@@ -17,11 +17,6 @@ interface ProxyProvider {
 }
 
 const PROXY_PROVIDERS: ProxyProvider[] = [
-  {
-    name: 'cors-anywhere',
-    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
-    requiresHeaders: true // sets x-requested-with
-  },
   {
     name: 'corsproxy.io',
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
@@ -36,11 +31,15 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     name: 'allorigins',
     format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     requiresHeaders: false
+  },
+  {
+    name: 'cors-anywhere',
+    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
+    requiresHeaders: true // sets x-requested-with
   }
 ];
 
 export const fetchWithProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
-  let lastError: any;
   let failureResponse: Response | null = null;
 
   for (const provider of PROXY_PROVIDERS) {
@@ -73,16 +72,31 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
          }
       }
 
-      // If we get here, it's a non-200 response (e.g. 401, 500). 
-      // It COULD be the API rejecting a valid request, OR the proxy malfunctioning/stripping headers.
-      // We save this response as a candidate for the final result, but we CONTINUE to the next proxy to be safe.
-      // However, if it's a 401/403, it's likely the API responding, so we could potentially stop, but 
-      // some proxies strip headers causing 401s, so it's safer to try others.
-      if (!failureResponse || (response.status !== 401 && response.status !== 403)) {
+      // Smart Failure Selection:
+      // We want to return the most "useful" error response if all proxies fail.
+      // Priority: 
+      // 1. Application Errors (500, 400, 404) - Means we reached the API.
+      // 2. Auth Errors (401, 403) - Means we reached the API but were denied.
+      // 3. Proxy Errors (429) - Least useful, means proxy blocked us.
+      
+      if (!failureResponse) {
           failureResponse = response;
+      } else {
+          const currentStatus = failureResponse.status;
+          const newStatus = response.status;
+
+          // Always upgrade away from 429 (Rate Limit) if the new one isn't 429
+          if (currentStatus === 429 && newStatus !== 429) {
+              failureResponse = response;
+          }
+          // Upgrade away from 401/403 (Auth) to a "Real" error (like 500 or 400) if available
+          // This prevents false "Invalid Token" errors if a proxy stripped headers
+          else if ((currentStatus === 401 || currentStatus === 403) && (newStatus !== 401 && newStatus !== 403 && newStatus !== 429)) {
+              failureResponse = response;
+          }
       }
       
-      console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next provider...`);
+      console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next...`);
       
     } catch (err: any) {
       console.warn(`Proxy ${provider.name} failed:`, err);
@@ -91,12 +105,10 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
       if (err.message === 'corsdemo_required') {
           throw new Error(`corsdemo_required`);
       }
-      
-      lastError = err;
     }
   }
 
-  // If we exhausted all proxies and have a failure response (e.g. 401 from the last proxy), return it.
+  // If we exhausted all proxies and have a failure response return it.
   if (failureResponse) {
       return failureResponse;
   }
