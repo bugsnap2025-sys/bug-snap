@@ -5,8 +5,9 @@
  * 
  * Proxies used:
  * 1. cors-anywhere (Primary: Supports headers best, requires activation)
- * 2. corsproxy.io (Backup: Fast, but sometimes strips headers)
- * 3. thingproxy (Fallback: Often unstable)
+ * 2. corsproxy.io (Backup: Fast)
+ * 3. codetabs (Fallback)
+ * 4. allorigins (Fallback: Raw mode)
  */
 
 interface ProxyProvider {
@@ -27,8 +28,13 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     requiresHeaders: false
   },
   {
-    name: 'thingproxy',
-    format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+    name: 'codetabs',
+    format: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    requiresHeaders: false
+  },
+  {
+    name: 'allorigins',
+    format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     requiresHeaders: false
   }
 ];
@@ -70,7 +76,12 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
       // If we get here, it's a non-200 response (e.g. 401, 500). 
       // It COULD be the API rejecting a valid request, OR the proxy malfunctioning/stripping headers.
       // We save this response as a candidate for the final result, but we CONTINUE to the next proxy to be safe.
-      failureResponse = response;
+      // However, if it's a 401/403, it's likely the API responding, so we could potentially stop, but 
+      // some proxies strip headers causing 401s, so it's safer to try others.
+      if (!failureResponse || (response.status !== 401 && response.status !== 403)) {
+          failureResponse = response;
+      }
+      
       console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next provider...`);
       
     } catch (err: any) {
@@ -86,10 +97,9 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
   }
 
   // If we exhausted all proxies and have a failure response (e.g. 401 from the last proxy), return it.
-  // This means the token is likely genuinely invalid, or the API is down.
   if (failureResponse) {
       return failureResponse;
   }
 
-  throw new Error(`Network Error: Unable to connect via any proxy. (${lastError?.message || ''})`);
+  throw new Error(`Network Error: Unable to connect via any proxy. Please check your connection.`);
 };

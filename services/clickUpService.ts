@@ -42,19 +42,31 @@ export const validateClickUpToken = async (token: string): Promise<boolean> => {
         if (userRes.ok) return true;
 
         // 2. Fallback: Try fetching Teams (Some tokens/roles might behave differently)
-        const teamRes = await fetchWithProxy('https://api.clickup.com/api/v2/team', {
-            headers: { 'Authorization': token }
-        });
-        if (teamRes.ok) return true;
+        // Only try fallback if specific auth error, to avoid masking network errors
+        if (userRes.status === 401) {
+            const teamRes = await fetchWithProxy('https://api.clickup.com/api/v2/team', {
+                headers: { 'Authorization': token }
+            });
+            if (teamRes.ok) return true;
+            
+            // If both fail with 401/403, we are sure it's invalid
+            if (teamRes.status === 401 || teamRes.status === 403) return false;
+        }
 
-        return false;
+        // If explicit 401/403 from primary endpoint and we didn't return above, it's invalid.
+        if (userRes.status === 401 || userRes.status === 403) return false;
+
+        // For other errors (500, 404, etc), throw error to alert user rather than saying "Invalid Token"
+        const text = await userRes.text();
+        throw new Error(`ClickUp API Error (${userRes.status}): ${text.substring(0, 100)}`);
+
     } catch (error) {
         console.error("Token validation failed:", error);
-        // Bubble up specific proxy requirement errors
-        if (error instanceof Error && error.message === 'corsdemo_required') {
+        // Bubble up specific proxy requirement errors or network errors
+        if (error instanceof Error) {
             throw error;
         }
-        return false;
+        throw new Error("Unknown validation error");
     }
 };
 
