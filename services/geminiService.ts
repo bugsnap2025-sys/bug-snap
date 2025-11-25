@@ -1,27 +1,36 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Retrieve API Key safely.
-// We access process.env.API_KEY directly so build tools can replace it with the string literal.
-// We wrap in try-catch to handle cases where 'process' is not defined (browser runtime)
-// and the build tool did NOT replace the variable (missing env var).
-let API_KEY = "";
-try {
-  API_KEY = process.env.API_KEY || "";
-} catch (e) {
-  // process is undefined and replacement didn't happen
-  console.warn("API_KEY environment variable not detected.");
-}
+// Helper to safely get the API Key in both Dev and Prod (Browser) environments
+const getApiKey = (): string | undefined => {
+  // 1. Try standard Vite injection (Recommended for Vercel + Vite)
+  // @ts-ignore - import.meta is a valid meta-property in Vite/ESM
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
+    // @ts-ignore
+    return import.meta.env.VITE_API_KEY;
+  }
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+  // 2. Try process.env safely (Node.js or Webpack Polyfill)
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      return process.env.API_KEY;
+    }
+  } catch (e) {
+    // process is likely undefined in browser, ignore error
+  }
+  
+  return undefined;
+};
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
-  if (!API_KEY) {
-    console.warn("Gemini API Key missing. Returning raw text.");
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.warn("Gemini API Key missing. Please set VITE_API_KEY in your environment.");
     return rawText; 
   }
 
   try {
+    const ai = new GoogleGenAI({ apiKey });
     const modelId = 'gemini-2.5-flash';
     const prompt = `
       You are a QA specialist helper. Rewrite the following bug report comment to be professional, concise, and actionable for developers. 
@@ -46,9 +55,11 @@ export const refineBugReport = async (rawText: string, context: string = "genera
 };
 
 export const generateMarkdownReport = async (slideTitle: string, annotations: any[]): Promise<string> => {
-  if (!API_KEY) return "";
+  const apiKey = getApiKey();
+  if (!apiKey) return "";
 
   try {
+    const ai = new GoogleGenAI({ apiKey });
     const modelId = 'gemini-2.5-flash';
     const annotationsList = annotations.map((a: any, i: number) => `${i + 1}. ${a.comment}`).join('\n');
     
@@ -77,11 +88,14 @@ export const generateAIReportMetadata = async (
   slideName: string, 
   annotations: any[]
 ): Promise<{ title: string, description: string }> => {
-  if (!API_KEY) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.warn("Gemini API Key missing. Returning default metadata.");
     return { title: slideName, description: "" };
   }
 
   try {
+    const ai = new GoogleGenAI({ apiKey });
     const modelId = 'gemini-2.5-flash';
     
     // Provide a default context if annotations are empty, so the model still generates a good title/description
