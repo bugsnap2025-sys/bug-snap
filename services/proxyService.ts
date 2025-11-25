@@ -6,7 +6,7 @@
  * Proxies used:
  * 1. corsproxy.io (Primary: Fast, reliable)
  * 2. codetabs (Backup)
- * 3. allorigins (Fallback: Might strip auth headers, used as last resort)
+ * 3. thingproxy (Backup)
  * 4. cors-anywhere (Demo: Strictly rate limited, requires activation)
  */
 
@@ -28,10 +28,11 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     requiresHeaders: false
   },
   {
-    name: 'allorigins',
-    format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    name: 'thingproxy',
+    format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
     requiresHeaders: false
   },
+  // allorigins removed: It strips Authorization headers, causing false 401s.
   {
     name: 'cors-anywhere',
     format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,

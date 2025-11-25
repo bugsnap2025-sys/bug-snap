@@ -56,6 +56,9 @@ export const validateClickUpToken = async (token: string): Promise<boolean> => {
 
         // For other errors (500, 429), throw error to alert user
         const text = await userRes.text();
+        if (userRes.status === 429 || text.toLowerCase().includes("too many requests")) {
+             throw new Error("Connection busy (Rate Limit). Please try again in a moment.");
+        }
         throw new Error(`ClickUp API Error (${userRes.status}): ${text.substring(0, 100)}`);
 
     } catch (error) {
