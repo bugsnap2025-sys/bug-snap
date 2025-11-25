@@ -1163,7 +1163,7 @@ export const Editor: React.FC<EditorProps> = ({
                           </div>
                       </div>
                       <textarea 
-                          ref={el => commentRefs.current[ann.id] = el}
+                          ref={(el) => { commentRefs.current[ann.id] = el; }}
                           className="w-full text-sm bg-transparent border-none p-0 focus:ring-0 resize-none text-slate-700 dark:text-zinc-200 placeholder-slate-400"
                           rows={2}
                           placeholder="Describe the issue..."

@@ -69,7 +69,11 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
         const teamsRes = await fetchWithProxy('https://api.clickup.com/api/v2/team', {
             headers: { 'Authorization': token }
         });
-        if (!teamsRes.ok) return []; // If we can't get teams, we can't get anything
+        
+        if (!teamsRes.ok) {
+             if (teamsRes.status === 401) throw new Error("Invalid Personal Access Token");
+             return []; 
+        }
         
         const teamsData = await teamsRes.json();
         const teams = teamsData.teams || [];
@@ -142,8 +146,12 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
         }
         return allLists;
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Failed to fetch ClickUp hierarchy", error);
+        // Important: Re-throw proxy errors so UI can show the unlock link
+        if (error.message === 'corsdemo_required') {
+            throw error;
+        }
         throw new Error("Failed to load lists. Check your Token.");
     }
 };
@@ -278,6 +286,10 @@ export const fetchClickUpTasks = async (listId: string, token: string): Promise<
         });
         
         if (!response.ok) {
+             // Handle generic failure, but let's check text for proxy errors if any
+            const text = await response.text();
+            if (text.includes('corsdemo')) throw new Error('corsdemo_required');
+            
             throw new Error(`Failed to fetch ClickUp tasks: ${response.status}`);
         }
         

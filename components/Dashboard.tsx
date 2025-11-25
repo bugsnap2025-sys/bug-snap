@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, ClickUpHierarchyList, DashboardFilter, SortField, SortOrder } from '../types';
 import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpService';
@@ -89,7 +90,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                              }
                          }
                      })
-                     .catch(err => console.error("Failed to load lists for dashboard", err))
+                     .catch(err => {
+                         console.error("Failed to load lists for dashboard", err);
+                         if (err.message === 'corsdemo_required') {
+                             setError('corsdemo_required');
+                         }
+                     })
                      .finally(() => setIsLoadingLists(false));
              }
          }
@@ -169,7 +175,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       setError(msg);
-      if (isRefresh) addToast("Failed to refresh data", 'error');
+      if (isRefresh && msg !== 'corsdemo_required') addToast("Failed to refresh data", 'error');
     } finally {
       setIsLoading(false);
     }
@@ -510,7 +516,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         {error && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 mb-8 flex items-start gap-3 text-red-800 dark:text-red-300">
                 <AlertTriangle className="shrink-0 mt-0.5" />
-                <div><h3 className="font-bold">Connection Issue</h3><p className="text-sm mt-1">{error}</p></div>
+                <div>
+                    <h3 className="font-bold">Connection Issue</h3>
+                    {error === 'corsdemo_required' ? (
+                        <div className="mt-1">
+                             <p className="text-sm mb-2">The browser proxy requires a one-time verification.</p>
+                             <a href="https://cors-anywhere.herokuapp.com/corsdemo" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold underline hover:text-red-900 dark:hover:text-red-200">
+                                <ExternalLink size={12}/> Unlock Proxy Here
+                             </a>
+                             <span className="text-xs ml-2 opacity-75">(Then refresh)</span>
+                        </div>
+                    ) : (
+                        <p className="text-sm mt-1">{error}</p>
+                    )}
+                </div>
             </div>
         )}
 

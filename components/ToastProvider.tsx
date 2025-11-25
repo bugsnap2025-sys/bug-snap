@@ -6,12 +6,12 @@ export type ToastType = 'success' | 'error' | 'info';
 
 export interface Toast {
   id: string;
-  message: string;
+  message: React.ReactNode;
   type: ToastType;
 }
 
 interface ToastContextType {
-  addToast: (message: string, type?: ToastType) => void;
+  addToast: (message: React.ReactNode, type?: ToastType) => void;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
@@ -31,7 +31,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
 
-  const addToast = useCallback((message: string, type: ToastType = 'info') => {
+  const addToast = useCallback((message: React.ReactNode, type: ToastType = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, message, type }]);
 
