@@ -1,8 +1,11 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, ClickUpHierarchyList, DashboardFilter, SortField, SortOrder } from '../types';
+import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, ClickUpHierarchyList, DashboardFilter, SortField, SortOrder, AsanaProject } from '../types';
 import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpService';
 import { fetchSlackHistory, postSlackMessage, generateDashboardSummary } from '../services/slackService';
+import { fetchJiraIssues } from '../services/jiraService';
+import { fetchAsanaTasks, getAsanaWorkspaces, getAsanaProjects } from '../services/asanaService';
+import { getZohoPortals, getZohoProjects, fetchZohoBugs } from '../services/zohoService';
 import { useToast } from './ToastProvider';
 import { IntegrationModal } from './IntegrationModal';
 import { 
@@ -20,8 +23,49 @@ import {
   ChevronDown,
   LayoutTemplate,
   AlertTriangle,
-  RefreshCcw
+  RefreshCcw,
+  CreditCard,
+  Briefcase,
+  Database
 } from 'lucide-react';
+
+const KPICard = ({ label, value, color, icon }: { label: string, value: string | number, color: string, icon: React.ReactNode }) => {
+  const colorMap: Record<string, string> = {
+    blue: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
+    orange: 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400',
+    green: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400',
+    indigo: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400',
+    teal: 'bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400',
+  };
+
+  return (
+    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] flex items-center gap-4 transition-colors">
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorMap[color] || colorMap.blue}`}>
+        {icon}
+      </div>
+      <div>
+        <p className="text-sm font-medium text-slate-500 dark:text-zinc-400">{label}</p>
+        <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
+      </div>
+    </div>
+  );
+};
+
+const getPriorityBadge = (priority: string) => {
+  const styles: Record<string, string> = {
+    Urgent: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800',
+    High: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border-orange-200 dark:border-orange-800',
+    Normal: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800',
+    Low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+    None: 'bg-slate-50 text-slate-500 dark:bg-[#272727] dark:text-zinc-400 border-slate-200 dark:border-[#3f3f3f]'
+  };
+
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${styles[priority] || styles.None}`}>
+      {priority}
+    </span>
+  );
+};
 
 interface DashboardProps {
   onCapture: () => void;
@@ -37,6 +81,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   
   // ClickUp Lists
   const [availableLists, setAvailableLists] = useState<ClickUpHierarchyList[]>([]);
+  
+  // Asana Projects (For Filtering)
+  const [asanaProjects, setAsanaProjects] = useState<AsanaProject[]>([]);
+  const [selectedAsanaProjectId, setSelectedAsanaProjectId] = useState('');
+
+  // Zoho Context
+  const [zohoPortals, setZohoPortals] = useState<any[]>([]); // Just using any for simpler component state here
+  const [selectedZohoPortalId, setSelectedZohoPortalId] = useState('');
   
   // Initialize with persisted list ID if available
   const [selectedListId, setSelectedListId] = useState<string>(() => {
@@ -70,18 +122,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
   const { addToast } = useToast();
 
-  // Load Lists on Mount (If ClickUp Token exists)
+  // Load Lists/Projects on Mount
   useEffect(() => {
      try {
          const savedConfig = localStorage.getItem('bugsnap_config');
          if (savedConfig) {
              const config: IntegrationConfig = JSON.parse(savedConfig);
+             
+             // ClickUp Lists
              if (config.clickUpToken) {
                  setIsLoadingLists(true);
                  getAllClickUpLists(config.clickUpToken)
                      .then(lists => {
                          setAvailableLists(lists);
-                         // If currently selected list is empty, default to config or first
                          if (!selectedListId) {
                              if (config.clickUpListId) {
                                  setSelectedListId(config.clickUpListId);
@@ -98,13 +151,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                      })
                      .finally(() => setIsLoadingLists(false));
              }
+
+             // Asana Projects
+             if (config.asanaToken) {
+                 getAsanaWorkspaces(config.asanaToken).then(ws => {
+                     if (ws.length > 0) {
+                         getAsanaProjects(config.asanaToken!, ws[0].gid).then(projs => {
+                             setAsanaProjects(projs);
+                             if (projs.length > 0) setSelectedAsanaProjectId(projs[0].gid);
+                         });
+                     }
+                 }).catch(err => console.error(err));
+             }
+
+             // Zoho Portals
+             if (config.zohoToken && config.zohoDC) {
+                 getZohoPortals(config.zohoDC, config.zohoToken).then(ps => {
+                     setZohoPortals(ps);
+                     if (ps.length > 0) setSelectedZohoPortalId(ps[0].id);
+                 }).catch(err => console.error(err));
+             }
          }
      } catch(e) { console.error("Config load error", e); }
   }, []);
 
   const handleListChange = (newListId: string) => {
       setSelectedListId(newListId);
-      // Persist selection
       try {
           const savedConfig = localStorage.getItem('bugsnap_config');
           if (savedConfig) {
@@ -115,7 +187,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
               localStorage.setItem('bugsnap_config', JSON.stringify(config));
           }
       } catch (e) { console.error("Failed to save list selection", e); }
-      // Reload data handled by effect
   };
 
   const handleRefresh = () => {
@@ -140,35 +211,80 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
         if (activeSource === 'ClickUp') {
             if (!config.clickUpToken || !targetListId) {
-            // If simply not selected yet, don't show error, just wait
-            if (!targetListId && availableLists.length > 0) {
-                // Wait for selection
-            } else if (!config.clickUpToken) {
-                setError("ClickUp is not fully configured. Please go to Integrations.");
-            }
-            setIssues([]);
-            return;
+                if (!targetListId && availableLists.length > 0) {
+                    // Wait for selection
+                } else if (!config.clickUpToken) {
+                    setError("ClickUp is not fully configured. Please go to Integrations.");
+                }
+                setIssues([]);
+                setIsLoading(false);
+                return;
             }
             const tasks = await fetchClickUpTasks(targetListId, config.clickUpToken);
             setIssues(tasks);
         } 
         else if (activeSource === 'Jira') {
-            if (!config.jiraUrl || !config.jiraToken) {
-            setError("Jira is not configured.");
-            setIssues([]);
-            return;
+            if (!config.jiraUrl || !config.jiraToken || !config.jiraEmail) {
+                setError("Jira is not configured.");
+                setIssues([]);
+                setIsLoading(false);
+                return;
             }
-            setIssues([]); 
-            setError("Jira integration is configured but fetching is coming soon.");
+            const jiraIssues = await fetchJiraIssues({
+                domain: config.jiraUrl,
+                email: config.jiraEmail,
+                token: config.jiraToken
+            });
+            setIssues(jiraIssues);
         }
         else if (activeSource === 'Slack') {
             if (!config.slackToken || !config.slackChannel) {
                 setError("Slack is not configured.");
                 setIssues([]);
+                setIsLoading(false);
                 return;
             }
             const history = await fetchSlackHistory(config.slackToken, config.slackChannel);
             setIssues(history);
+        }
+        else if (activeSource === 'Asana') {
+            if (!config.asanaToken) {
+                setError("Asana is not configured.");
+                setIssues([]);
+                setIsLoading(false);
+                return;
+            }
+            if (!selectedAsanaProjectId) {
+                setIssues([]);
+                setIsLoading(false);
+                return;
+            }
+            const asanaTasks = await fetchAsanaTasks(config.asanaToken, selectedAsanaProjectId);
+            setIssues(asanaTasks);
+        }
+        else if (activeSource === 'Zoho') {
+            if (!config.zohoToken || !config.zohoDC) {
+                setError("Zoho is not configured.");
+                setIssues([]);
+                setIsLoading(false);
+                return;
+            }
+            if (!selectedZohoPortalId) {
+                setIssues([]);
+                setIsLoading(false);
+                return;
+            }
+            // For simplicity in dashboard, we fetch projects for the portal and get bugs from the first one, 
+            // or just show empty if user hasn't selected. 
+            // A full implementation would need a project selector in dashboard similar to Asana.
+            // Let's try to fetch projects first.
+            const projects = await getZohoProjects(config.zohoDC, config.zohoToken, selectedZohoPortalId);
+            if (projects.length > 0) {
+                const bugs = await fetchZohoBugs(config.zohoDC, config.zohoToken, selectedZohoPortalId, projects[0].id);
+                setIssues(bugs);
+            } else {
+                setIssues([]);
+            }
         }
         
         if (isRefresh) addToast("Dashboard updated", 'success');
@@ -183,10 +299,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
   // Trigger load when source or list changes
   useEffect(() => {
-    if (selectedListId || activeSource !== 'ClickUp') {
-        loadData();
-    }
-  }, [activeSource, selectedListId]);
+    loadData();
+  }, [activeSource, selectedListId, selectedAsanaProjectId, selectedZohoPortalId]);
 
 
   // --- Derived Data (Filtering & Analytics) ---
@@ -263,7 +377,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   // Analytics Calculations
   const metrics = useMemo(() => {
       const total = processedData.length;
-      const resolvedStatuses = ['complete', 'closed', 'resolved', 'done'];
+      const resolvedStatuses = ['complete', 'closed', 'resolved', 'done', 'completed'];
       const resolvedCount = processedData.filter(i => resolvedStatuses.includes(i.status.toLowerCase())).length;
       const openCount = total - resolvedCount;
       const resolutionRate = total > 0 ? Math.round((resolvedCount / total) * 100) : 0;
@@ -328,8 +442,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
         addToast(`${integrationModalSource} connected!`, 'success');
         setIntegrationModalSource(null);
         
-        // If we just connected ClickUp, reload
-        if (integrationModalSource === 'ClickUp') loadData(true);
+        // Reload data
+        loadData(true);
       } catch (e) {
           addToast("Failed to save configuration", "error");
       }
@@ -386,9 +500,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
 
         {/* 3. Header Row: Title & Right Controls */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <div>
-                <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Bug Dashboard</h1>
-                <p className="text-slate-500 dark:text-zinc-400">Track testing progress and project health.</p>
+            <div className="flex gap-4">
+                <div className="flex bg-slate-100 dark:bg-[#272727] p-1 rounded-xl">
+                    <button 
+                        onClick={() => setActiveSource('ClickUp')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'ClickUp' ? 'bg-white dark:bg-[#1e1e1e] text-[#7B68EE] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
+                    >
+                        <Layers size={16} /> ClickUp
+                    </button>
+                    <button 
+                         onClick={() => setActiveSource('Jira')}
+                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Jira' ? 'bg-white dark:bg-[#1e1e1e] text-[#0052CC] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
+                    >
+                        <CreditCard size={16} /> Jira
+                    </button>
+                     <button 
+                         onClick={() => setActiveSource('Asana')}
+                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Asana' ? 'bg-white dark:bg-[#1e1e1e] text-[#F06A6A] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
+                    >
+                        <CheckCircle2 size={16} /> Asana
+                    </button>
+                    <button 
+                         onClick={() => setActiveSource('Zoho')}
+                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Zoho' ? 'bg-white dark:bg-[#1e1e1e] text-teal-600 shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
+                    >
+                        <Database size={16} /> Zoho
+                    </button>
+                    <button 
+                         onClick={() => setActiveSource('Slack')}
+                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeSource === 'Slack' ? 'bg-white dark:bg-[#1e1e1e] text-[#4A154B] shadow-sm' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'}`}
+                    >
+                        <Slack size={16} /> Slack
+                    </button>
+                </div>
             </div>
             
             <div className="flex items-center gap-3">
@@ -423,6 +567,80 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                         </button>
                     </div>
                 )}
+                 
+                 {activeSource === 'Jira' && (
+                     <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-500">Jira Projects</span>
+                        <button 
+                            onClick={handleRefresh} 
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-[#0052CC] transition"
+                            title="Refresh Data"
+                            disabled={isLoading}
+                        >
+                            <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
+                        </button>
+                     </div>
+                 )}
+                 
+                 {activeSource === 'Asana' && (
+                    <div className="flex items-center gap-2 bg-white dark:bg-[#1e1e1e] p-2 rounded-xl border border-slate-200 dark:border-[#272727] shadow-sm transition-colors">
+                        <div className="bg-[#F06A6A]/10 dark:bg-[#F06A6A]/20 p-1.5 rounded-lg text-[#F06A6A] dark:text-[#F06A6A]">
+                            <Briefcase size={18} />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase px-2 hidden sm:inline">Project:</span>
+                        <div className="relative min-w-[150px] sm:min-w-[200px]">
+                            <select 
+                                value={selectedAsanaProjectId} 
+                                onChange={(e) => setSelectedAsanaProjectId(e.target.value)}
+                                className="w-full appearance-none bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-1.5 pl-3 pr-8 text-sm font-bold text-slate-700 dark:text-zinc-200 focus:ring-2 focus:ring-[#F06A6A] focus:border-transparent outline-none cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] transition"
+                            >
+                                {asanaProjects.map(p => (
+                                    <option key={p.gid} value={p.gid}>{p.name}</option>
+                                ))}
+                                {asanaProjects.length === 0 && <option value="">No Projects Found</option>}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-3 top-2.5 text-slate-400 pointer-events-none"/>
+                        </div>
+                        <button 
+                            onClick={handleRefresh} 
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-[#F06A6A] hover:bg-[#F06A6A]/5 dark:hover:bg-[#F06A6A]/10 transition"
+                            title="Refresh Data"
+                            disabled={isLoading}
+                        >
+                            <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
+                        </button>
+                    </div>
+                 )}
+
+                 {activeSource === 'Zoho' && (
+                    <div className="flex items-center gap-2 bg-white dark:bg-[#1e1e1e] p-2 rounded-xl border border-slate-200 dark:border-[#272727] shadow-sm transition-colors">
+                        <div className="bg-teal-600/10 dark:bg-teal-600/20 p-1.5 rounded-lg text-teal-600">
+                            <Database size={18} />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase px-2 hidden sm:inline">Portal:</span>
+                        <div className="relative min-w-[150px] sm:min-w-[200px]">
+                            <select 
+                                value={selectedZohoPortalId} 
+                                onChange={(e) => setSelectedZohoPortalId(e.target.value)}
+                                className="w-full appearance-none bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg py-1.5 pl-3 pr-8 text-sm font-bold text-slate-700 dark:text-zinc-200 focus:ring-2 focus:ring-teal-600 focus:border-transparent outline-none cursor-pointer hover:bg-slate-100 dark:hover:bg-[#222] transition"
+                            >
+                                {zohoPortals.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                                {zohoPortals.length === 0 && <option value="">No Portals Found</option>}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-3 top-2.5 text-slate-400 pointer-events-none"/>
+                        </div>
+                        <button 
+                            onClick={handleRefresh} 
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-600/5 dark:hover:bg-teal-600/10 transition"
+                            title="Refresh Data"
+                            disabled={isLoading}
+                        >
+                            <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
+                        </button>
+                    </div>
+                 )}
 
                 {/* Share Summary Button */}
                  <button 
@@ -603,37 +821,4 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
       </div>
     </div>
   );
-};
-
-// Helper Component for KPI Cards
-const KPICard = ({ label, value, color, icon }: any) => {
-    const colorClasses: Record<string, string> = {
-        blue: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400",
-        orange: "bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400",
-        red: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400",
-        green: "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400",
-        purple: "bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400",
-        indigo: "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400"
-    };
-
-    return (
-        <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-200 dark:border-[#272727] flex flex-col justify-between h-28 transition-colors">
-            <div className="flex justify-between items-start">
-                 <span className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wide">{label}</span>
-                 <div className={`p-1.5 rounded-lg ${colorClasses[color]}`}>{icon}</div>
-            </div>
-            <span className="text-3xl font-bold text-slate-900 dark:text-white">{value}</span>
-        </div>
-    )
-}
-
-// Helper Priority Badge
-const getPriorityBadge = (priority: ReportedIssue['priority']) => {
-    switch (priority) {
-      case 'Urgent': return <span className="text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded text-xs font-bold border border-red-100 dark:border-red-800 flex w-fit items-center gap-1"><AlertCircle size={10}/> Urgent</span>;
-      case 'High': return <span className="text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded text-xs font-medium border border-orange-100 dark:border-orange-800 w-fit block">High</span>;
-      case 'Normal': return <span className="text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded text-xs font-medium border border-blue-100 dark:border-blue-800 w-fit block">Normal</span>;
-      case 'Low': return <span className="text-slate-500 dark:text-zinc-400 bg-slate-100 dark:bg-[#272727] px-2 py-0.5 rounded text-xs font-medium border border-slate-200 dark:border-[#3f3f3f] w-fit block">Low</span>;
-      default: return <span className="text-slate-400 px-2 text-xs">-</span>;
-    }
 };

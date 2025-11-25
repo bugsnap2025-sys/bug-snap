@@ -1,9 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Database, Link as LinkIcon } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
+import { validateJiraCredentials } from '../services/jiraService';
+import { validateTeamsConnection, extractTeamsInfoFromUrl } from '../services/teamsService';
+import { validateAsanaToken } from '../services/asanaService';
+import { validateZohoToken } from '../services/zohoService';
 
 interface IntegrationModalProps {
   isOpen: boolean;
@@ -42,13 +46,32 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     setIsCorsDemoError(false);
   };
 
+  const handleTeamsLinkChange = (url: string) => {
+      const { teamId, channelId } = extractTeamsInfoFromUrl(url);
+      if (teamId && channelId) {
+          setFormData(prev => ({
+              ...prev,
+              teamsTeamId: teamId,
+              teamsChannelId: channelId
+          }));
+      }
+  };
+
   const handleSave = async () => {
     let newConfig = { ...formData };
     
-    // Trim string values to handle copy-paste errors
+    // Trim string values
     if (newConfig.clickUpToken) newConfig.clickUpToken = newConfig.clickUpToken.trim();
     if (newConfig.slackToken) newConfig.slackToken = newConfig.slackToken.trim();
     if (newConfig.slackChannel) newConfig.slackChannel = newConfig.slackChannel.trim();
+    if (newConfig.jiraUrl) newConfig.jiraUrl = newConfig.jiraUrl.trim().replace(/\/$/, '');
+    if (newConfig.jiraEmail) newConfig.jiraEmail = newConfig.jiraEmail.trim();
+    if (newConfig.jiraToken) newConfig.jiraToken = newConfig.jiraToken.trim();
+    if (newConfig.teamsToken) newConfig.teamsToken = newConfig.teamsToken.trim();
+    if (newConfig.teamsTeamId) newConfig.teamsTeamId = newConfig.teamsTeamId.trim();
+    if (newConfig.teamsChannelId) newConfig.teamsChannelId = newConfig.teamsChannelId.trim();
+    if (newConfig.asanaToken) newConfig.asanaToken = newConfig.asanaToken.trim();
+    if (newConfig.zohoToken) newConfig.zohoToken = newConfig.zohoToken.trim();
 
     setIsValidating(true);
     setError(null);
@@ -59,14 +82,10 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             if (!newConfig.clickUpToken) {
                 throw new Error("Personal Access Token is required.");
             }
-            
-            // Validate Token
             const isValid = await validateClickUpToken(newConfig.clickUpToken);
             if (!isValid) {
                 throw new Error("Invalid Personal Access Token. Authentication failed.");
             }
-
-            // List selection handled elsewhere
         } 
         else if (source === 'Slack') {
             if (!newConfig.slackToken || !newConfig.slackToken.startsWith('xoxb-')) {
@@ -85,6 +104,36 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             if (!newConfig.jiraUrl || !newConfig.jiraToken || !newConfig.jiraEmail) {
                  throw new Error("All fields are required for Jira.");
             }
+            const isValid = await validateJiraCredentials(newConfig.jiraUrl, newConfig.jiraEmail, newConfig.jiraToken);
+            if (!isValid) throw new Error("Jira Authentication Failed. Check credentials.");
+        }
+        else if (source === 'Teams') {
+            if (!newConfig.teamsToken || !newConfig.teamsTeamId || !newConfig.teamsChannelId) {
+                throw new Error("All fields (Token, Team ID, Channel ID) are required.");
+            }
+            const isValid = await validateTeamsConnection(newConfig.teamsToken, newConfig.teamsTeamId, newConfig.teamsChannelId);
+            if (!isValid) throw new Error("Teams Connection Failed. Check Token/IDs.");
+        }
+        else if (source === 'Asana') {
+            if (!newConfig.asanaToken) {
+                throw new Error("Personal Access Token is required.");
+            }
+            const isValid = await validateAsanaToken(newConfig.asanaToken);
+            if (!isValid) throw new Error("Asana Authentication Failed.");
+        }
+        else if (source === 'Zoho') {
+            // Fix: Default to 'com' if user didn't change the dropdown (visual default)
+            const dc = newConfig.zohoDC || 'com';
+            
+            if (!newConfig.zohoToken) {
+                throw new Error("OAuth Access Token is required.");
+            }
+            
+            // Use the resolved DC for validation
+            await validateZohoToken(dc, newConfig.zohoToken);
+            
+            // Ensure the defaulted DC is saved to config
+            newConfig.zohoDC = dc;
         }
 
         setIsValidating(false);
@@ -112,6 +161,20 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
       } else if (source === 'Slack') {
           newConfig.slackToken = undefined;
           newConfig.slackChannel = undefined;
+      } else if (source === 'Jira') {
+          newConfig.jiraToken = undefined;
+          newConfig.jiraEmail = undefined;
+          newConfig.jiraUrl = undefined;
+      } else if (source === 'Teams') {
+          newConfig.teamsToken = undefined;
+          newConfig.teamsTeamId = undefined;
+          newConfig.teamsChannelId = undefined;
+      } else if (source === 'Asana') {
+          newConfig.asanaToken = undefined;
+          newConfig.asanaWorkspaceId = undefined;
+      } else if (source === 'Zoho') {
+          newConfig.zohoToken = undefined;
+          newConfig.zohoDC = undefined;
       }
       
       onSave(newConfig as IntegrationConfig);
@@ -136,9 +199,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                             />
                             <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
-                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-2">
-                           List selection is now available directly on the Dashboard and Export screen.
-                        </p>
                     </div>
                 </div>
             );
@@ -176,9 +236,172 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira':
             return (
                  <div className="space-y-4">
-                     <p className="text-sm text-slate-500 dark:text-zinc-400 italic">Jira integration coming soon. Configuration is currently unavailable.</p>
+                     <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Jira Cloud URL</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="https://your-domain.atlassian.net"
+                                value={formData.jiraUrl || ''}
+                                onChange={(e) => handleChange('jiraUrl', e.target.value)}
+                            />
+                            <Globe className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                     </div>
+                     <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Email Address</label>
+                        <div className="relative">
+                            <input 
+                                type="email" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="user@company.com"
+                                value={formData.jiraEmail || ''}
+                                onChange={(e) => handleChange('jiraEmail', e.target.value)}
+                            />
+                            <Mail className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                     </div>
+                     <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">API Token</label>
+                        <div className="relative">
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="Paste API Token here"
+                                value={formData.jiraToken || ''}
+                                onChange={(e) => handleChange('jiraToken', e.target.value)}
+                            />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">Create a token at <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" className="text-blue-500 underline">Atlassian Security Settings</a></p>
+                     </div>
                  </div>
             );
+        case 'Teams':
+            return (
+                 <div className="space-y-4">
+                     <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Graph Access Token</label>
+                        <div className="relative">
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="Bearer token..."
+                                value={formData.teamsToken || ''}
+                                onChange={(e) => handleChange('teamsToken', e.target.value)}
+                            />
+                            <Key className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                     </div>
+                     
+                     {/* New Link Parser Input */}
+                     <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800">
+                        <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">Auto-fill from Channel Link</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-white dark:bg-[#121212] border border-slate-300 dark:border-[#3f3f3f] rounded-lg p-2 pl-8 text-xs text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="Paste 'Get link to channel' here..."
+                                onChange={(e) => handleTeamsLinkChange(e.target.value)}
+                            />
+                            <LinkIcon className="absolute left-2.5 top-2.5 text-slate-400" size={12} />
+                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1">
+                            Right-click channel &gt; "Get link to channel" &gt; Paste above to auto-fill IDs.
+                        </p>
+                     </div>
+
+                     <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Team ID (GUID)</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="e.g. 02bd9fd6-8f93-4758-87c3-1fb73740a315"
+                                value={formData.teamsTeamId || ''}
+                                onChange={(e) => handleChange('teamsTeamId', e.target.value)}
+                            />
+                            <Users className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                     </div>
+                     <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Channel ID</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="19:ExampleChannelId@thread.tacv2"
+                                value={formData.teamsChannelId || ''}
+                                onChange={(e) => handleChange('teamsChannelId', e.target.value)}
+                            />
+                            <Hash className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                     </div>
+                 </div>
+            );
+         case 'Asana':
+             return (
+                 <div className="space-y-6">
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Personal Access Token</label>
+                        <div className="relative">
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#F06A6A] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="1/120..."
+                                value={formData.asanaToken || ''}
+                                onChange={(e) => handleChange('asanaToken', e.target.value)}
+                            />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                    </div>
+                </div>
+             );
+         case 'Zoho':
+             const zohoConsoleUrl = (() => {
+                 const dc = formData.zohoDC || 'com';
+                 if (dc === 'eu') return 'https://api-console.zoho.eu/';
+                 if (dc === 'in') return 'https://api-console.zoho.in/';
+                 if (dc === 'com.au') return 'https://api-console.zoho.com.au/';
+                 if (dc === 'jp') return 'https://api-console.zoho.jp/';
+                 return 'https://api-console.zoho.com/';
+             })();
+
+             return (
+                 <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Data Center</label>
+                        <select
+                            className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-teal-600 focus:border-transparent p-3 text-sm text-slate-900 dark:text-white outline-none transition-colors cursor-pointer"
+                            value={formData.zohoDC || 'com'}
+                            onChange={(e) => handleChange('zohoDC', e.target.value)}
+                        >
+                            <option value="com">US (zoho.com)</option>
+                            <option value="eu">Europe (zoho.eu)</option>
+                            <option value="in">India (zoho.in)</option>
+                            <option value="com.au">Australia (zoho.com.au)</option>
+                            <option value="jp">Japan (zoho.jp)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">OAuth Access Token</label>
+                        <div className="relative">
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-teal-600 focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="1000.xxxx..."
+                                value={formData.zohoToken || ''}
+                                onChange={(e) => handleChange('zohoToken', e.target.value)}
+                            />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Generate via <a href={zohoConsoleUrl} target="_blank" className="text-teal-600 underline">Zoho API Console</a> (Self Client). Scope: <code>ZohoProjects.portals.READ, ZohoProjects.projects.READ, ZohoProjects.bugs.CREATE</code>
+                        </p>
+                    </div>
+                </div>
+             );
         default:
             return null;
     }
@@ -189,6 +412,9 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'ClickUp': return '#7B68EE';
         case 'Slack': return '#4A154B';
         case 'Jira': return '#0052CC';
+        case 'Teams': return '#5059C9';
+        case 'Asana': return '#F06A6A';
+        case 'Zoho': return '#0d9488'; // teal-600
         default: return '#3b82f6';
     }
   };
@@ -198,6 +424,9 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'ClickUp': return <Layers size={20} />;
         case 'Slack': return <Slack size={20} />;
         case 'Jira': return <CreditCard size={20} />;
+        case 'Teams': return <Users size={20} />;
+        case 'Asana': return <CheckCircle2 size={20} />;
+        case 'Zoho': return <Database size={20} />;
         default: return null;
     }
   };

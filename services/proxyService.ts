@@ -4,9 +4,9 @@
  * Tries multiple CORS proxies in sequence to bypass browser restrictions.
  * 
  * Proxies used:
- * 1. corsproxy.io (Fast, reliable, supports POST)
- * 2. thingproxy (Backup, supports POST)
- * 3. cors-anywhere (Fallback, supports POST, requires activation)
+ * 1. cors-anywhere (Primary: Supports headers best, requires activation)
+ * 2. corsproxy.io (Backup: Fast, but sometimes strips headers)
+ * 3. thingproxy (Fallback: Often unstable)
  */
 
 interface ProxyProvider {
@@ -17,6 +17,11 @@ interface ProxyProvider {
 
 const PROXY_PROVIDERS: ProxyProvider[] = [
   {
+    name: 'cors-anywhere',
+    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
+    requiresHeaders: true // sets x-requested-with
+  },
+  {
     name: 'corsproxy.io',
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     requiresHeaders: false
@@ -25,11 +30,6 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     name: 'thingproxy',
     format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
     requiresHeaders: false
-  },
-  {
-    name: 'cors-anywhere',
-    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
-    requiresHeaders: true // Only this one needs the specific header
   }
 ];
 

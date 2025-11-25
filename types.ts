@@ -39,7 +39,7 @@ export interface User {
 }
 
 export interface IntegrationConfig {
-  jiraUrl?: string;
+  jiraUrl?: string; // e.g., https://your-domain.atlassian.net
   jiraEmail?: string;
   jiraToken?: string;
   clickUpToken?: string;
@@ -48,6 +48,13 @@ export interface IntegrationConfig {
   slackWebhook?: string; // Deprecated in favor of token
   slackToken?: string; // Bot User OAuth Token (xoxb-...)
   slackChannel?: string; // Channel ID (C123456)
+  teamsToken?: string; // Microsoft Graph Access Token
+  teamsTeamId?: string; // Team GUID
+  teamsChannelId?: string; // Channel ID
+  asanaToken?: string; // Asana Personal Access Token
+  asanaWorkspaceId?: string; // Default Workspace ID
+  zohoDC?: string; // Data Center (com, eu, in, etc.)
+  zohoToken?: string; // OAuth Access Token
 }
 
 export enum AppView {
@@ -63,7 +70,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Zoho';
 
 export interface ReportedIssue {
   id: string;
@@ -85,6 +92,10 @@ export interface ReportedIssue {
 
 export type ClickUpExportMode = 'current' | 'all_attachments' | 'all_subtasks';
 export type SlackExportMode = 'current' | 'all_files' | 'thread';
+export type JiraExportMode = 'current' | 'all_attachments';
+export type TeamsExportMode = 'current' | 'summary';
+export type AsanaExportMode = 'current' | 'all_attachments';
+export type ZohoExportMode = 'current' | 'all_attachments';
 
 // New Video Recording Types
 export type CaptureMode = 'screenshot' | 'video' | 'floating';
@@ -112,6 +123,46 @@ export interface ClickUpHierarchyList {
     id: string;
     name: string;
     groupName: string; // "Space Name > Folder Name"
+}
+
+// Jira Types
+export interface JiraProject {
+  id: string;
+  key: string;
+  name: string;
+  avatarUrls?: {
+    '48x48': string;
+  };
+}
+
+export interface JiraIssueType {
+  id: string;
+  name: string;
+  description: string;
+  iconUrl: string;
+  subtask: boolean;
+}
+
+// Asana Types
+export interface AsanaWorkspace {
+  gid: string;
+  name: string;
+}
+
+export interface AsanaProject {
+  gid: string;
+  name: string;
+}
+
+// Zoho Types
+export interface ZohoPortal {
+  id: string; // id_string or id
+  name: string;
+}
+
+export interface ZohoProject {
+  id: string; // id_string
+  name: string;
 }
 
 // Dashboard Filters

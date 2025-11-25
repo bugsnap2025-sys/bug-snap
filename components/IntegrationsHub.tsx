@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { useToast } from './ToastProvider';
-import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2 } from 'lucide-react';
+import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Database } from 'lucide-react';
 import { IntegrationModal } from './IntegrationModal';
 
 export const IntegrationsHub: React.FC = () => {
@@ -24,19 +24,41 @@ export const IntegrationsHub: React.FC = () => {
     setActiveModal(null);
   };
 
-  const handleDisconnectClickUp = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      const newConfig = { ...config, clickUpToken: undefined, clickUpListId: undefined, clickUpListName: undefined };
+  const handleDisconnect = (source: IntegrationSource) => {
+      const newConfig = { ...config };
+      if (source === 'ClickUp') {
+          newConfig.clickUpToken = undefined;
+          newConfig.clickUpListId = undefined;
+          newConfig.clickUpListName = undefined;
+      } else if (source === 'Jira') {
+          newConfig.jiraToken = undefined;
+          newConfig.jiraUrl = undefined;
+          newConfig.jiraEmail = undefined;
+      } else if (source === 'Teams') {
+          newConfig.teamsToken = undefined;
+          newConfig.teamsTeamId = undefined;
+          newConfig.teamsChannelId = undefined;
+      } else if (source === 'Asana') {
+          newConfig.asanaToken = undefined;
+          newConfig.asanaWorkspaceId = undefined;
+      } else if (source === 'Zoho') {
+          newConfig.zohoToken = undefined;
+          newConfig.zohoDC = undefined;
+      }
+      
       setConfig(newConfig);
       localStorage.setItem('bugsnap_config', JSON.stringify(newConfig));
-      addToast('ClickUp disconnected.', 'info');
+      addToast(`${source} disconnected.`, 'info');
   };
 
   const isConnected = (source: IntegrationSource) => {
       switch(source) {
-          case 'ClickUp': return !!config.clickUpToken; // List ID might be selected later, token is enough for "Connected"
+          case 'ClickUp': return !!config.clickUpToken; 
           case 'Slack': return !!config.slackToken && !!config.slackChannel;
-          case 'Jira': return !!config.jiraToken && !!config.jiraUrl;
+          case 'Jira': return !!config.jiraToken && !!config.jiraUrl && !!config.jiraEmail;
+          case 'Teams': return !!config.teamsToken && !!config.teamsTeamId && !!config.teamsChannelId;
+          case 'Asana': return !!config.asanaToken;
+          case 'Zoho': return !!config.zohoToken && !!config.zohoDC;
       }
   };
 
@@ -72,7 +94,7 @@ export const IntegrationsHub: React.FC = () => {
                 
                 {isConnected('ClickUp') ? (
                     <button 
-                        onClick={handleDisconnectClickUp}
+                        onClick={() => handleDisconnect('ClickUp')}
                         className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
                     >
                         <Trash2 size={16} /> Disconnect
@@ -109,22 +131,123 @@ export const IntegrationsHub: React.FC = () => {
             </div>
 
             {/* Jira Card */}
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#0052CC] dark:hover:border-[#0052CC] transition-all group relative overflow-hidden opacity-80">
-                 <div className="absolute top-4 right-4 bg-slate-100 dark:bg-[#272727] text-slate-500 dark:text-zinc-400 text-[10px] font-bold px-2 py-1 rounded border border-slate-200 dark:border-[#272727]">
-                        COMING SOON
-                 </div>
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#0052CC] dark:hover:border-[#0052CC] transition-all group relative overflow-hidden">
+                {isConnected('Jira') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
                 <div className="w-14 h-14 bg-[#0052CC]/10 dark:bg-[#0052CC]/20 text-[#0052CC] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                     <CreditCard size={32} />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Jira</h3>
                 <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Sync reported issues bi-directionally with your Jira Software backlog.</p>
-                <button 
-                     onClick={() => setActiveModal('Jira')}
-                     className="w-full py-2.5 rounded-lg font-bold text-sm bg-slate-100 dark:bg-[#272727] text-slate-400 dark:text-zinc-500 cursor-not-allowed flex items-center justify-center gap-2"
-                     disabled
-                >
-                    Connect Jira
-                </button>
+                
+                {isConnected('Jira') ? (
+                     <button 
+                        onClick={() => handleDisconnect('Jira')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('Jira')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#0052CC] text-white hover:bg-[#0747A6] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Jira <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Microsoft Teams Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#5059C9] dark:hover:border-[#5059C9] transition-all group relative overflow-hidden">
+                {isConnected('Teams') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-[#5059C9]/10 dark:bg-[#5059C9]/20 text-[#5059C9] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Users size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Microsoft Teams</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Send formatted bug reports to channels via Graph API.</p>
+                
+                {isConnected('Teams') ? (
+                     <button 
+                        onClick={() => handleDisconnect('Teams')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('Teams')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#5059C9] text-white hover:bg-[#434aa8] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Teams <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Asana Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#F06A6A] dark:hover:border-[#F06A6A] transition-all group relative overflow-hidden">
+                {isConnected('Asana') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-[#F06A6A]/10 dark:bg-[#F06A6A]/20 text-[#F06A6A] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <CheckCircle2 size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Asana</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Sync annotated bug reports to your Asana projects as tasks.</p>
+                
+                {isConnected('Asana') ? (
+                     <button 
+                        onClick={() => handleDisconnect('Asana')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('Asana')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#F06A6A] text-white hover:bg-[#e05a5a] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Asana <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Zoho Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-teal-600 dark:hover:border-teal-600 transition-all group relative overflow-hidden">
+                {isConnected('Zoho') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-teal-600/10 dark:bg-teal-600/20 text-teal-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Database size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Zoho Projects</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Create bugs in Zoho Projects Portals directly from screenshots.</p>
+                
+                {isConnected('Zoho') ? (
+                     <button 
+                        onClick={() => handleDisconnect('Zoho')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('Zoho')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-teal-600 text-white hover:bg-teal-700 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Zoho <ArrowRight size={16} />
+                    </button>
+                )}
             </div>
         </div>
 

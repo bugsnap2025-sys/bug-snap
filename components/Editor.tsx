@@ -1,11 +1,19 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource } from '../types';
+import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource, JiraExportMode, TeamsExportMode, AsanaExportMode, ZohoExportMode } from '../types';
 import { refineBugReport } from '../services/geminiService';
 import { createClickUpTask, uploadClickUpAttachment, generateTaskDescription, generateMasterDescription } from '../services/clickUpService';
 import { postSlackMessage, uploadSlackFile, generateSlideMessage } from '../services/slackService';
+import { createJiraIssue, uploadJiraAttachment } from '../services/jiraService';
+import { postTeamsMessage } from '../services/teamsService';
+import { createAsanaTask, uploadAsanaAttachment } from '../services/asanaService';
+import { createZohoBug, uploadZohoAttachment } from '../services/zohoService';
 import { ClickUpModal } from './ClickUpModal';
 import { SlackModal } from './SlackModal';
+import { JiraModal } from './JiraModal';
+import { TeamsModal } from './TeamsModal';
+import { AsanaModal } from './AsanaModal';
+import { ZohoModal } from './ZohoModal';
 import { IntegrationModal } from './IntegrationModal';
 import { useToast } from './ToastProvider';
 import { jsPDF } from "jspdf";
@@ -31,7 +39,11 @@ import {
   Move,
   AlertTriangle,
   Check,
-  ExternalLink
+  ExternalLink,
+  CreditCard,
+  Users,
+  CheckCircle2,
+  Database
 } from 'lucide-react';
 
 interface EditorProps {
@@ -87,10 +99,15 @@ export const Editor: React.FC<EditorProps> = ({
   // Modal State
   const [isClickUpModalOpen, setIsClickUpModalOpen] = useState(false);
   const [isSlackModalOpen, setIsSlackModalOpen] = useState(false);
+  const [isJiraModalOpen, setIsJiraModalOpen] = useState(false);
+  const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false);
+  const [isAsanaModalOpen, setIsAsanaModalOpen] = useState(false);
+  const [isZohoModalOpen, setIsZohoModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [createdTaskUrl, setCreatedTaskUrl] = useState<string | null>(null);
+  const [createdTaskPlatform, setCreatedTaskPlatform] = useState<string>('ClickUp');
   
   // Integration Modal State
   const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
@@ -460,11 +477,6 @@ export const Editor: React.FC<EditorProps> = ({
     }
 
     // Scale calculation: Map Display Width (DOM) -> Render Width (Canvas)
-    // naturalWidth was mapped to displayWidth.
-    // We are rendering at renderWidth.
-    // If renderWidth == naturalWidth, scale is naturalWidth / displayWidth.
-    // If we downscaled, we effectively render a smaller image.
-    // The scale factor for annotations should be: renderWidth / displayWidth
     const scale = renderWidth / displayWidth;
     
     const sidebarWidth = 600; 
@@ -664,7 +676,7 @@ export const Editor: React.FC<EditorProps> = ({
      }
   };
 
-  // Updated Export Handler accepting Custom Title/Description
+  // ClickUp Export Handler
   const handleExportToClickUp = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
@@ -681,8 +693,6 @@ export const Editor: React.FC<EditorProps> = ({
     setIsExporting(true);
     try {
         let taskUrl = "";
-
-        // Use JPEG with 0.7 quality to optimize size (~2MB or less usually)
         const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
         const ext = '.jpg';
 
@@ -737,6 +747,7 @@ export const Editor: React.FC<EditorProps> = ({
 
         setIsClickUpModalOpen(false);
         setCreatedTaskUrl(taskUrl);
+        setCreatedTaskPlatform('ClickUp');
 
     } catch (error) {
         console.error(error);
@@ -748,6 +759,256 @@ export const Editor: React.FC<EditorProps> = ({
     } finally {
         setIsExporting(false);
     }
+  };
+
+  // Jira Export Handler
+  const handleExportToJira = async (mode: JiraExportMode, projectId: string, issueTypeId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) {
+          setExportError("Please configure Jira in Integrations first.");
+          return;
+      }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.jiraToken || !config.jiraUrl || !config.jiraEmail) {
+          setExportError("Missing Jira configuration.");
+          return;
+      }
+
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          const creds = { domain: config.jiraUrl, email: config.jiraEmail, token: config.jiraToken };
+
+          let issueKey = "";
+          let issueUrl = "";
+
+          if (mode === 'current') {
+              const issue = await createJiraIssue(creds, {
+                  projectId,
+                  issueTypeId,
+                  title: customTitle || activeSlide.name || 'Bug Report',
+                  description: customDescription || generateTaskDescription(activeSlide)
+              });
+              issueKey = issue.key;
+              issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
+              
+              const blob = await optimizeImage(activeSlide);
+              await uploadJiraAttachment(creds, issue.id, blob, `report${ext}`);
+          }
+          else if (mode === 'all_attachments') {
+              const issue = await createJiraIssue(creds, {
+                  projectId,
+                  issueTypeId,
+                  title: customTitle || `Bug Report - ${new Date().toLocaleString()}`,
+                  description: customDescription || generateMasterDescription(slides)
+              });
+              issueKey = issue.key;
+              issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
+
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadJiraAttachment(creds, issue.id, blob, `${slide.name}${ext}`);
+              }
+          }
+
+          setIsJiraModalOpen(false);
+          setCreatedTaskUrl(issueUrl);
+          setCreatedTaskPlatform('Jira');
+
+      } catch (error) {
+          console.error(error);
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          setExportError(msg);
+          if (!msg.includes('corsdemo')) {
+              addToast(msg, 'error');
+          }
+      } finally {
+          setIsExporting(false);
+      }
+  };
+
+  // Microsoft Teams Export Handler
+  const handleExportToTeams = async (mode: TeamsExportMode) => {
+    setExportError(null);
+    const savedConfig = localStorage.getItem('bugsnap_config');
+    if (!savedConfig) {
+        setExportError("Please configure Teams in Integrations first.");
+        return;
+    }
+    const config: IntegrationConfig = JSON.parse(savedConfig);
+    if (!config.teamsToken || !config.teamsTeamId || !config.teamsChannelId) {
+        setExportError("Missing Teams configuration in Integrations.");
+        return;
+    }
+
+    setIsExporting(true);
+    try {
+        if (mode === 'current') {
+             await postTeamsMessage(
+                { token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId },
+                activeSlide
+             );
+        }
+        else if (mode === 'summary') {
+             await postTeamsMessage(
+                { token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId },
+                undefined,
+                generateMasterDescription(slides)
+             );
+        }
+
+        setIsTeamsModalOpen(false);
+        addToast("Shared to Teams Successfully!", 'success');
+
+    } catch (error) {
+        console.error(error);
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        setExportError(msg);
+         if (!msg.includes('corsdemo')) {
+            addToast(msg, 'error');
+        }
+    } finally {
+        setIsExporting(false);
+    }
+  };
+
+  // Asana Export Handler
+  const handleExportToAsana = async (mode: AsanaExportMode, workspaceId: string, projectId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) {
+          setExportError("Please configure Asana in Integrations first.");
+          return;
+      }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.asanaToken) {
+          setExportError("Missing Asana Personal Access Token.");
+          return;
+      }
+
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          
+          let taskUrl = "";
+
+          if (mode === 'current') {
+              const task = await createAsanaTask(
+                  config.asanaToken,
+                  workspaceId,
+                  projectId,
+                  customTitle || activeSlide.name || 'Bug Report',
+                  customDescription || generateTaskDescription(activeSlide)
+              );
+              taskUrl = task.permalink_url;
+              
+              const blob = await optimizeImage(activeSlide);
+              await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `report${ext}`);
+          }
+          else if (mode === 'all_attachments') {
+              const task = await createAsanaTask(
+                  config.asanaToken,
+                  workspaceId,
+                  projectId,
+                  customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`,
+                  customDescription || generateMasterDescription(slides)
+              );
+              taskUrl = task.permalink_url;
+
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `${slide.name}${ext}`);
+              }
+          }
+
+          setIsAsanaModalOpen(false);
+          setCreatedTaskUrl(taskUrl);
+          setCreatedTaskPlatform('Asana');
+
+      } catch (error) {
+          console.error(error);
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          setExportError(msg);
+          if (!msg.includes('corsdemo')) {
+              addToast(msg, 'error');
+          }
+      } finally {
+          setIsExporting(false);
+      }
+  };
+
+  // Zoho Export Handler
+  const handleExportToZoho = async (mode: ZohoExportMode, portalId: string, projectId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) {
+          setExportError("Please configure Zoho in Integrations first.");
+          return;
+      }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.zohoToken || !config.zohoDC) {
+          setExportError("Missing Zoho configuration.");
+          return;
+      }
+
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          
+          let taskUrl = "";
+
+          if (mode === 'current') {
+              const bug = await createZohoBug(
+                  config.zohoDC,
+                  config.zohoToken,
+                  portalId,
+                  projectId,
+                  customTitle || activeSlide.name || 'Bug Report',
+                  customDescription || generateTaskDescription(activeSlide)
+              );
+              taskUrl = bug.link?.self || '#';
+              
+              const blob = await optimizeImage(activeSlide);
+              // Bug ID from Zoho response might be 'id' or 'id_string'
+              const bugId = bug.id_string || bug.id;
+              await uploadZohoAttachment(config.zohoDC, config.zohoToken, portalId, projectId, bugId, blob, `report${ext}`);
+          }
+          else if (mode === 'all_attachments') {
+              const bug = await createZohoBug(
+                  config.zohoDC,
+                  config.zohoToken,
+                  portalId,
+                  projectId,
+                  customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`,
+                  customDescription || generateMasterDescription(slides)
+              );
+              taskUrl = bug.link?.self || '#';
+              const bugId = bug.id_string || bug.id;
+
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadZohoAttachment(config.zohoDC, config.zohoToken, portalId, projectId, bugId, blob, `${slide.name}${ext}`);
+              }
+          }
+
+          setIsZohoModalOpen(false);
+          setCreatedTaskUrl(taskUrl);
+          setCreatedTaskPlatform('Zoho');
+
+      } catch (error) {
+          console.error(error);
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          setExportError(msg);
+          if (!msg.includes('corsdemo')) {
+              addToast(msg, 'error');
+          }
+      } finally {
+          setIsExporting(false);
+      }
   };
 
   const handleExportToSlack = async (mode: SlackExportMode) => {
@@ -869,9 +1130,9 @@ export const Editor: React.FC<EditorProps> = ({
                   <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mb-4 shadow-sm">
                       <Check size={32} strokeWidth={3} />
                   </div>
-                  <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Task Created!</h2>
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Issue Created!</h2>
                   <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 leading-relaxed">
-                      Successfully exported to ClickUp.
+                      Successfully exported to {createdTaskPlatform}.
                   </p>
                   <a 
                       href={createdTaskUrl} 
@@ -880,7 +1141,7 @@ export const Editor: React.FC<EditorProps> = ({
                       className="w-full py-3 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 mb-3 transform active:scale-95"
                       onClick={() => setCreatedTaskUrl(null)}
                   >
-                      Open in ClickUp <ExternalLink size={18} />
+                      Open in {createdTaskPlatform} <ExternalLink size={18} />
                   </a>
                   <button 
                       onClick={() => setCreatedTaskUrl(null)}
@@ -934,6 +1195,61 @@ export const Editor: React.FC<EditorProps> = ({
         slides={slides}
         error={exportError}
         onConfigure={() => { setIsSlackModalOpen(false); setIntegrationModalSource('Slack'); }}
+      />
+
+      <JiraModal 
+        isOpen={isJiraModalOpen}
+        onClose={() => {
+            setIsJiraModalOpen(false);
+            setExportError(null);
+        }}
+        onExport={handleExportToJira}
+        loading={isExporting}
+        slides={slides}
+        activeSlideId={activeSlideId}
+        error={exportError}
+        onConfigure={() => { setIsJiraModalOpen(false); setIntegrationModalSource('Jira'); }}
+      />
+      
+      <TeamsModal
+        isOpen={isTeamsModalOpen}
+        onClose={() => {
+            setIsTeamsModalOpen(false);
+            setExportError(null);
+        }}
+        onExport={handleExportToTeams}
+        loading={isExporting}
+        slides={slides}
+        error={exportError}
+        onConfigure={() => { setIsTeamsModalOpen(false); setIntegrationModalSource('Teams'); }}
+      />
+      
+      <AsanaModal
+        isOpen={isAsanaModalOpen}
+        onClose={() => {
+            setIsAsanaModalOpen(false);
+            setExportError(null);
+        }}
+        onExport={handleExportToAsana}
+        loading={isExporting}
+        slides={slides}
+        activeSlideId={activeSlideId}
+        error={exportError}
+        onConfigure={() => { setIsAsanaModalOpen(false); setIntegrationModalSource('Asana'); }}
+      />
+
+      <ZohoModal
+        isOpen={isZohoModalOpen}
+        onClose={() => {
+            setIsZohoModalOpen(false);
+            setExportError(null);
+        }}
+        onExport={handleExportToZoho}
+        loading={isExporting}
+        slides={slides}
+        activeSlideId={activeSlideId}
+        error={exportError}
+        onConfigure={() => { setIsZohoModalOpen(false); setIntegrationModalSource('Zoho'); }}
       />
 
       {/* Toolbar */}
@@ -1025,13 +1341,39 @@ export const Editor: React.FC<EditorProps> = ({
            </button>
            
            <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
-
-           <button 
-                onClick={() => setIsClickUpModalOpen(true)}
-                className="flex items-center gap-1.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors ml-auto"
-            >
-               <Layers size={14} /> Export to ClickUp
-            </button>
+           
+           <div className="flex gap-2">
+                <button 
+                        onClick={() => setIsTeamsModalOpen(true)}
+                        className="flex items-center gap-1.5 bg-[#5059C9] hover:bg-[#434aa8] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
+                    >
+                    <Users size={14} /> Teams
+                </button>
+                <button 
+                    onClick={() => setIsJiraModalOpen(true)}
+                    className="flex items-center gap-1.5 bg-[#0052CC] hover:bg-[#0747A6] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
+                >
+                <CreditCard size={14} /> Jira
+                </button>
+                <button 
+                        onClick={() => setIsClickUpModalOpen(true)}
+                        className="flex items-center gap-1.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
+                    >
+                    <Layers size={14} /> ClickUp
+                </button>
+                <button 
+                        onClick={() => setIsAsanaModalOpen(true)}
+                        className="flex items-center gap-1.5 bg-[#F06A6A] hover:bg-[#e05a5a] text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
+                    >
+                    <CheckCircle2 size={14} /> Asana
+                </button>
+                <button 
+                        onClick={() => setIsZohoModalOpen(true)}
+                        className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm transition-colors"
+                    >
+                    <Database size={14} /> Zoho
+                </button>
+           </div>
         </div>
       </div>
 
