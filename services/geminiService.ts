@@ -1,25 +1,37 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 
 // Helper to safely get the API Key in both Dev and Prod (Browser) environments
 const getApiKey = (): string | undefined => {
+  let key: string | undefined = undefined;
+
   // 1. Try standard Vite injection (Recommended for Vercel + Vite)
   // @ts-ignore - import.meta is a valid meta-property in Vite/ESM
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
-    // @ts-ignore
-    return import.meta.env.VITE_API_KEY;
-  }
-
-  // 2. Try process.env safely (Node.js or Webpack Polyfill)
   try {
-    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-      return process.env.API_KEY;
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
+      // @ts-ignore
+      key = import.meta.env.VITE_API_KEY;
     }
   } catch (e) {
-    // process is likely undefined in browser, ignore error
+    // ignore
   }
-  
-  return undefined;
+
+  // 2. Try process.env (Node.js or Bundler Replaced String)
+  // We MUST access process.env.API_KEY directly inside try-catch to allow bundlers 
+  // to replace it with the string literal, while catching ReferenceError in browser if not replaced.
+  if (!key) {
+    try {
+      // @ts-ignore
+      if (process.env.API_KEY) {
+        // @ts-ignore
+        key = process.env.API_KEY;
+      }
+    } catch (e) {
+      // process is not defined, ignore
+    }
+  }
+
+  return key;
 };
 
 export const refineBugReport = async (rawText: string, context: string = "general"): Promise<string> => {
