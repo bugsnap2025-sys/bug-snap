@@ -4,16 +4,18 @@
  * Tries multiple CORS proxies in sequence to bypass browser restrictions.
  * 
  * Proxies used:
- * 1. corsproxy.io (Primary: Fast, supports most headers)
- * 2. cors-anywhere (Backup: Reliable but requires demo activation)
- * 3. allorigins (Backup: Good uptime, using raw mode)
- * 4. thingproxy (Legacy: Frequent rate limits)
+ * 1. corsproxy.io (Primary: Fast, supports most headers, supports POST)
+ * 2. cors-anywhere (Backup: Reliable but requires demo activation, supports POST)
+ * 3. codetabs (Backup: Good uptime, supports POST)
+ * 4. allorigins (Backup: GET ONLY. Good for reading data, fails on POST)
+ * 5. thingproxy (Legacy: Frequent rate limits)
  */
 
 interface ProxyProvider {
   name: string;
   format: (url: string) => string;
   requiresHeaders?: boolean;
+  methods?: string[]; // If undefined, supports all. If defined, only supports listed.
 }
 
 const PROXY_PROVIDERS: ProxyProvider[] = [
@@ -28,9 +30,15 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     requiresHeaders: true // sets x-requested-with
   },
   {
-    name: 'allorigins',
-    format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    name: 'codetabs',
+    format: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     requiresHeaders: false
+  },
+  {
+    name: 'allorigins',
+    format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&t=${Date.now()}`, // Timestamp prevents caching
+    requiresHeaders: false,
+    methods: ['GET', 'HEAD'] // allorigins does not support POST bodies correctly
   },
   {
     name: 'thingproxy',
@@ -41,8 +49,14 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
 
 export const fetchWithProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
   let failureResponse: Response | null = null;
+  const method = options.method || 'GET';
 
   for (const provider of PROXY_PROVIDERS) {
+    // Skip if provider doesn't support the method (e.g. POST to allorigins)
+    if (provider.methods && !provider.methods.includes(method)) {
+        continue;
+    }
+
     try {
       const proxyUrl = provider.format(url);
       
@@ -74,10 +88,6 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
 
       // Smart Failure Selection:
       // We want to return the most "useful" error response if all proxies fail.
-      // Priority: 
-      // 1. Application Errors (500, 400, 404) - Means we reached the API.
-      // 2. Auth Errors (401, 403) - Means we reached the API but were denied.
-      // 3. Proxy Errors (429) - Least useful, means proxy blocked us.
       
       if (!failureResponse) {
           failureResponse = response;
@@ -85,12 +95,13 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
           const currentStatus = failureResponse.status;
           const newStatus = response.status;
 
-          // Prefer Application Errors over Proxy Errors
+          // Prefer Application Errors (400, 401, 404, 500) over Proxy Errors (429, 503)
+          // If the current saved response is a Rate Limit (429), and we have a new one that isn't, take the new one.
           if (currentStatus === 429 && newStatus !== 429) {
               failureResponse = response;
           }
-          // Prefer 500/400 over 401/403 (Auth) to debug connectivity vs creds
-          else if ((currentStatus === 401 || currentStatus === 403) && (newStatus !== 401 && newStatus !== 403 && newStatus !== 429)) {
+          // Prefer Auth errors (401/403) as they usually mean we reached the destination
+          else if ((currentStatus !== 401 && currentStatus !== 403) && (newStatus === 401 || newStatus === 403)) {
               failureResponse = response;
           }
       }
