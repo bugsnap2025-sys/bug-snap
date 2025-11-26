@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { ClickUpExportMode, Slide, ClickUpHierarchyList, IntegrationConfig } from '../types';
-import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight } from 'lucide-react';
+import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight, HardDrive } from 'lucide-react';
 import { extractListId, getAllClickUpLists } from '../services/clickUpService';
 import { generateAIReportMetadata } from '../services/geminiService';
+import { requestDriveToken } from '../services/googleDriveService';
 
 interface ClickUpModalProps {
   isOpen: boolean;
@@ -35,6 +37,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [isAuthorizingDrive, setIsAuthorizingDrive] = useState(false);
 
   const activeSlide = slides.find(s => s.id === activeSlideId) || slides[0];
 
@@ -109,6 +112,24 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
       }
   };
 
+  const handleEnableDriveBackup = async () => {
+      setIsAuthorizingDrive(true);
+      try {
+          const token = await requestDriveToken();
+          const saved = localStorage.getItem('bugsnap_config');
+          const config = saved ? JSON.parse(saved) : {};
+          config.googleDriveToken = token;
+          localStorage.setItem('bugsnap_config', JSON.stringify(config));
+          
+          // Retry export immediately
+          handleExport();
+      } catch (e) {
+          console.error("Drive Auth Failed", e);
+      } finally {
+          setIsAuthorizingDrive(false);
+      }
+  };
+
   if (!isOpen) return null;
 
   // Not Configured State
@@ -143,6 +164,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   }
 
   const isCorsDemoError = error?.includes('corsdemo');
+  const isStorageFullError = error?.includes('Storage Full') || error?.includes('connect Google Drive');
   const cleanError = error?.replace(/ClickUp API Error: \d+ - /, '');
 
   const handleExport = () => {
@@ -211,6 +233,24 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                             <RefreshCw size={14} /> Retry
                         </button>
                     </div>
+                 </div>
+              ) : isStorageFullError ? (
+                 <div className="flex flex-col gap-3">
+                    <div className="flex items-start gap-2 font-bold text-red-800 dark:text-red-300">
+                        <HardDrive size={16} className="mt-0.5 shrink-0" />
+                        <span>ClickUp Storage Full</span>
+                    </div>
+                    <p className="text-red-700 dark:text-red-400">
+                        Your ClickUp workspace has reached its storage limit. Enable Google Drive Backup to upload images to Drive and link them in the task instead.
+                    </p>
+                    <button 
+                        onClick={handleEnableDriveBackup}
+                        disabled={isAuthorizingDrive}
+                        className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-xs w-fit"
+                    >
+                        {isAuthorizingDrive ? <Loader2 size={14} className="animate-spin"/> : <HardDrive size={14} />}
+                        Enable Drive Backup & Retry
+                    </button>
                  </div>
               ) : (
                  <div className="flex flex-col gap-1 text-red-700 dark:text-red-400 break-words">
@@ -387,7 +427,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
         <div className="p-5 border-t border-slate-100 dark:border-[#272727] bg-slate-50 dark:bg-[#0f0f0f] flex justify-end gap-3 shrink-0">
           <button 
             onClick={onClose}
-            disabled={loading}
+            disabled={loading || isAuthorizingDrive}
             className="px-6 py-2.5 text-slate-600 dark:text-zinc-400 font-bold hover:bg-slate-200 dark:hover:bg-[#272727] rounded-xl transition text-sm"
           >
             Cancel
@@ -396,7 +436,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
           {!isCorsDemoError && (
              <button 
                onClick={handleExport}
-               disabled={loading || !listId || isGeneratingAI}
+               disabled={loading || !listId || isGeneratingAI || isAuthorizingDrive}
                className="px-8 py-2.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white font-bold rounded-xl shadow-md hover:shadow-lg transition flex items-center gap-2 text-sm disabled:opacity-70 disabled:cursor-not-allowed transform active:scale-95"
              >
                {loading ? (

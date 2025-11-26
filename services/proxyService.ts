@@ -4,9 +4,9 @@
  * Tries multiple CORS proxies in sequence to bypass browser restrictions.
  * 
  * Proxies used:
- * 1. corsproxy.io (Primary: Fast, reliable)
- * 2. codetabs (Backup)
- * 3. thingproxy (Backup)
+ * 1. thingproxy (Primary: Reliable)
+ * 2. codetabs (Backup: Good for GETs)
+ * 3. corsproxy.io (Backup: Fast but aggressive rate limits)
  * 4. cors-anywhere (Demo: Strictly rate limited, requires activation)
  */
 
@@ -18,8 +18,8 @@ interface ProxyProvider {
 
 const PROXY_PROVIDERS: ProxyProvider[] = [
   {
-    name: 'corsproxy.io',
-    format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    name: 'thingproxy',
+    format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
     requiresHeaders: false
   },
   {
@@ -28,11 +28,10 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     requiresHeaders: false
   },
   {
-    name: 'thingproxy',
-    format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+    name: 'corsproxy.io',
+    format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     requiresHeaders: false
   },
-  // allorigins removed: It strips Authorization headers, causing false 401s.
   {
     name: 'cors-anywhere',
     format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
@@ -86,21 +85,20 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
           const currentStatus = failureResponse.status;
           const newStatus = response.status;
 
-          // Always upgrade away from 429 (Rate Limit) if the new one isn't 429
+          // Prefer Application Errors over Proxy Errors
           if (currentStatus === 429 && newStatus !== 429) {
               failureResponse = response;
           }
-          // Upgrade away from 401/403 (Auth) to a "Real" error (like 500 or 400) if available
-          // This prevents false "Invalid Token" errors if a proxy stripped headers
+          // Prefer 500/400 over 401/403 (Auth) to debug connectivity vs creds
           else if ((currentStatus === 401 || currentStatus === 403) && (newStatus !== 401 && newStatus !== 403 && newStatus !== 429)) {
               failureResponse = response;
           }
       }
       
-      console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next...`);
+      // console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next...`);
       
     } catch (err: any) {
-      console.warn(`Proxy ${provider.name} failed:`, err);
+      // console.warn(`Proxy ${provider.name} failed:`, err);
       
       // If it's the specific lock error, stop trying and throw immediately to prompt user
       if (err.message === 'corsdemo_required') {

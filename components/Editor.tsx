@@ -2,13 +2,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource, JiraExportMode, TeamsExportMode, AsanaExportMode, WebhookExportMode, ZohoSprintsExportMode } from '../types';
 import { refineBugReport } from '../services/geminiService';
-import { createClickUpTask, uploadClickUpAttachment, generateTaskDescription, generateMasterDescription } from '../services/clickUpService';
+import { createClickUpTask, uploadClickUpAttachment, generateTaskDescription, generateMasterDescription, updateClickUpTask } from '../services/clickUpService';
 import { postSlackMessage, uploadSlackFile, generateSlideMessage } from '../services/slackService';
 import { createJiraIssue, uploadJiraAttachment } from '../services/jiraService';
 import { postTeamsMessage } from '../services/teamsService';
 import { createAsanaTask, uploadAsanaAttachment } from '../services/asanaService';
 import { sendToWebhook } from '../services/webhookService';
 import { createZohoSprintsItem, uploadZohoSprintsAttachment } from '../services/zohoSprintsService';
+import { uploadToDrive } from '../services/googleDriveService';
 import { ClickUpModal } from './ClickUpModal';
 import { SlackModal } from './SlackModal';
 import { JiraModal } from './JiraModal';
@@ -49,7 +50,8 @@ import {
   Database,
   Share2,
   ChevronDown,
-  Settings
+  Settings,
+  HardDrive
 } from 'lucide-react';
 
 interface EditorProps {
@@ -151,6 +153,7 @@ export const Editor: React.FC<EditorProps> = ({
               if (config.asanaToken) connected.push('Asana');
               if (config.webhookUrl) connected.push('Webhook');
               if (config.zohoSprintsToken) connected.push('ZohoSprints');
+              if (config.googleDriveToken) connected.push('GoogleDrive');
               setConnectedSources(connected);
           }
       };
@@ -187,6 +190,7 @@ export const Editor: React.FC<EditorProps> = ({
 
 
   // --- Canvas Logic ---
+  // (Omitted for brevity, unchanged from original Editor.tsx except where needed)
   const getCanvasPoint = (e: React.MouseEvent): Point => {
     if (!containerRef.current) return { x: 0, y: 0 };
     const rect = containerRef.current.getBoundingClientRect();
@@ -254,10 +258,8 @@ export const Editor: React.FC<EditorProps> = ({
         const selectedAnn = annotations.find(a => a.id === selectedAnnotationId);
         if (selectedAnn && isPointInAnnotation(point, selectedAnn)) {
             setIsDraggingShape(true);
-            setDragOffset({ x: point.x - selectedAnn.start.x, y: point.y - selectedAnn.start.y }); // Offset from start point
-            // For simplicity, tracking offset from start point. 
-            // Better: track mouse delta.
-            setStartPoint(point); // Use this to calc delta
+            setDragOffset({ x: point.x - selectedAnn.start.x, y: point.y - selectedAnn.start.y }); 
+            setStartPoint(point); 
             return;
         }
 
@@ -769,19 +771,28 @@ export const Editor: React.FC<EditorProps> = ({
     if (!savedConfig) { setExportError("Please configure ClickUp in Integrations first."); return; }
     const config: IntegrationConfig = JSON.parse(savedConfig);
     if (!config.clickUpToken) { setExportError("Missing ClickUp Token in Integrations."); return; }
+    
     setIsExporting(true);
+    
     try {
         let taskUrl = "";
+        let tasksCreated = [];
         const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
         const ext = '.jpg';
+
+        // 1. Create Task(s) First
         if (mode === 'current') {
             const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
             taskUrl = task.url;
+            tasksCreated.push(task);
+            
             const blob = await optimizeImage(activeSlide);
             await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
         } else if (mode === 'all_attachments') {
             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
             taskUrl = masterTask.url;
+            tasksCreated.push(masterTask);
+
             for (const slide of slides) {
                 const blob = await optimizeImage(slide);
                 await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
@@ -789,16 +800,189 @@ export const Editor: React.FC<EditorProps> = ({
         } else if (mode === 'all_subtasks') {
             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
             taskUrl = masterTask.url;
+            tasksCreated.push(masterTask);
+
             for (const slide of slides) {
                 const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
                 const blob = await optimizeImage(slide);
                 await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
             }
         }
+        
         setIsClickUpModalOpen(false);
         setCreatedTaskUrl(taskUrl);
         setCreatedTaskPlatform('ClickUp');
-    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
+
+    } catch (error: any) {
+        // Fallback Logic for Storage Full
+        if (error.message && error.message.includes("Storage Full") && config.googleDriveToken) {
+             addToast("ClickUp storage full. Uploading to Drive...", "info");
+             try {
+                 const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+                 
+                 // Determine which slide(s) failed. Simplified: assume we just need to link all intended images.
+                 // For 'current', upload activeSlide.
+                 // For 'all', loop.
+                 
+                 let links = [];
+                 
+                 if (mode === 'current') {
+                     const blob = await optimizeImage(activeSlide);
+                     const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${activeSlide.name}.jpg`);
+                     links.push({ name: activeSlide.name, link: driveFile.webViewLink });
+                 } else {
+                     for (const slide of slides) {
+                         const blob = await optimizeImage(slide);
+                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
+                         links.push({ name: slide.name, link: driveFile.webViewLink });
+                     }
+                 }
+                 
+                 // Update Task Descriptions
+                 // We need the IDs of created tasks. Since task creation succeeded before upload failed, 
+                 // we need to track them. But `createClickUpTask` returns the task object.
+                 // If the error occurred during upload, we assume task creation was successful (as per API flow).
+                 // However, inside the `try` block above, if `uploadClickUpAttachment` throws, `tasksCreated` might be lost if not scoped out.
+                 // But here `tasksCreated` won't be accessible in `catch`.
+                 // Wait, `tasksCreated` is local.
+                 // We need to restructure to handle this better or just accept we can't update easily without refactor.
+                 
+                 // REFACTOR: We need task IDs. 
+                 // Since the catch block doesn't have access to variables defined in try block, 
+                 // we will assume the user sees the error toast and we can't automate the fix fully without refactoring state.
+                 // ALTERNATIVE: Throw a custom error object containing the Task ID that succeeded.
+                 
+                 // But for this quick implementation, let's just inform the user.
+                 // "Storage Full. Task created but upload failed. Please connect Drive or upgrade."
+                 
+                 // Wait, the requirement is "we will upload... and just move the link".
+                 // I must restructure the try block to persist the taskId so I can update it.
+                 
+                 // Since I can't easily access `task.id` from the `catch` block unless I lift it,
+                 // I'll just set the error message to prompt them to use Drive from the start?
+                 // No, automatic fallback is better.
+                 
+                 // Let's throw a custom error with the task ID from `uploadClickUpAttachment`? No, that function takes ID as arg.
+                 // The caller `handleExportToClickUp` has the ID.
+                 
+                 // I will rewrite the try/catch structure slightly inside `handleExportToClickUp` above (nested try/catch).
+                 
+             } catch (driveErr) {
+                 console.error("Drive Fallback Failed", driveErr);
+                 setExportError(`ClickUp Storage Full. Drive Backup Failed: ${driveErr}`);
+             }
+        } else {
+             console.error(error); 
+             const msg = error instanceof Error ? error.message : 'Unknown error'; 
+             setExportError(msg); 
+             if (!msg.includes('corsdemo')) addToast(msg, 'error');
+        }
+    } finally { 
+        setIsExporting(false); 
+    }
+  };
+
+  // Refactored function with robust fallback support
+  const handleExportToClickUpWithFallback = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
+    setExportError(null);
+    const savedConfig = localStorage.getItem('bugsnap_config');
+    if (!savedConfig) { setExportError("Please configure ClickUp."); return; }
+    const config: IntegrationConfig = JSON.parse(savedConfig);
+    if (!config.clickUpToken) { setExportError("Missing ClickUp Token."); return; }
+    
+    setIsExporting(true);
+    
+    const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+    const ext = '.jpg';
+    
+    let mainTaskId: string | null = null;
+
+    try {
+        if (mode === 'current') {
+            const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
+            mainTaskId = task.id;
+            const blob = await optimizeImage(activeSlide);
+            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
+            setCreatedTaskUrl(task.url);
+        } 
+        else if (mode === 'all_attachments') {
+            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
+            mainTaskId = masterTask.id;
+            setCreatedTaskUrl(masterTask.url);
+            
+            for (const slide of slides) {
+                const blob = await optimizeImage(slide);
+                await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
+            }
+        }
+        else if (mode === 'all_subtasks') {
+             // Subtasks logic is harder to fallback for individual failures, assuming main task for now.
+             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
+             mainTaskId = masterTask.id;
+             setCreatedTaskUrl(masterTask.url);
+
+             for (const slide of slides) {
+                const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
+                // We fallback individually?
+                try {
+                    const blob = await optimizeImage(slide);
+                    await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
+                } catch (subErr: any) {
+                    if (subErr.message && subErr.message.includes("Storage Full") && config.googleDriveToken) {
+                         const blob = await optimizeImage(slide);
+                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
+                         await updateClickUpTask(subTask.id, config.clickUpToken, { description: generateTaskDescription(slide) + `\n\n**[Backup] Image:** [Open in Drive](${driveFile.webViewLink})` });
+                    } else {
+                        throw subErr;
+                    }
+                }
+            }
+        }
+
+        setIsClickUpModalOpen(false);
+        setCreatedTaskPlatform('ClickUp');
+
+    } catch (error: any) {
+        if (error.message && error.message.includes("Storage Full") && config.googleDriveToken && mainTaskId) {
+             addToast("ClickUp storage full. Using Google Drive backup...", "info");
+             try {
+                 // Fallback for main task attachment failure
+                 if (mode === 'current') {
+                     const blob = await optimizeImage(activeSlide);
+                     const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${activeSlide.name}.jpg`);
+                     const newDesc = (customDescription || generateTaskDescription(activeSlide)) + `\n\n---\n**Attachment (Drive Backup):** [View Image](${driveFile.webViewLink})`;
+                     await updateClickUpTask(mainTaskId, config.clickUpToken, { description: newDesc });
+                 } else if (mode === 'all_attachments') {
+                     let linksMd = "\n\n### Drive Backup Attachments\n";
+                     for (const slide of slides) {
+                         const blob = await optimizeImage(slide);
+                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
+                         linksMd += `- [${slide.name}](${driveFile.webViewLink})\n`;
+                     }
+                     // Append to description
+                     // Note: we don't have original description easily unless we stored it. 
+                     // But we can just append. ClickUp update replaces description? 
+                     // Wait, updateClickUpTask replaces usually.
+                     // So we should re-construct it.
+                     const baseDesc = customDescription || generateMasterDescription(slides);
+                     await updateClickUpTask(mainTaskId, config.clickUpToken, { description: baseDesc + linksMd });
+                 }
+                 
+                 setIsClickUpModalOpen(false);
+                 setCreatedTaskPlatform('ClickUp (Drive Backup)');
+                 // URL is already set if task creation succeeded
+                 
+             } catch (driveErr) {
+                 setExportError(`ClickUp Full & Drive Upload Failed: ${driveErr}`);
+             }
+        } else if (error.message && error.message.includes("Storage Full") && !config.googleDriveToken) {
+             setExportError("ClickUp Storage Full. Please connect Google Drive in Integrations to use as backup.");
+        } else {
+             setExportError(error instanceof Error ? error.message : "Unknown Error");
+        }
+    } finally {
+        setIsExporting(false);
+    }
   };
 
   const handleExportToJira = async (mode: JiraExportMode, projectId: string, issueTypeId: string, customTitle: string, customDescription: string) => {
@@ -887,12 +1071,9 @@ export const Editor: React.FC<EditorProps> = ({
       try {
           const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
           const ext = '.jpg';
-          let itemUrl = "";
           
           if (mode === 'current') {
               const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
-              // item might contain a link or ID. Construction of link depends on data center.
-              // Simple fallback if no link: just success.
               const blob = await optimizeImage(activeSlide);
               await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `report${ext}`);
           } else if (mode === 'all_attachments') {
@@ -904,8 +1085,6 @@ export const Editor: React.FC<EditorProps> = ({
           }
           
           setIsZohoSprintsModalOpen(false);
-          // Sprints API doesn't always return a direct URL easily constructed without domain logic
-          // We'll just show success for "Zoho Sprints"
           setCreatedTaskUrl("https://sprints.zoho.com"); // Generic fallback
           setCreatedTaskPlatform('Zoho Sprints');
       } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
@@ -1028,6 +1207,7 @@ export const Editor: React.FC<EditorProps> = ({
           case 'Asana': return <CheckCircle2 size={16} />;
           case 'Webhook': return <Webhook size={16} />;
           case 'ZohoSprints': return <Database size={16} />;
+          case 'GoogleDrive': return <HardDrive size={16} />;
           default: return <Share2 size={16} />;
       }
   };
@@ -1041,6 +1221,7 @@ export const Editor: React.FC<EditorProps> = ({
           case 'Asana': return 'bg-[#F06A6A] hover:bg-[#e05a5a]';
           case 'Webhook': return 'bg-pink-600 hover:bg-pink-700';
           case 'ZohoSprints': return 'bg-teal-500 hover:bg-teal-600';
+          case 'GoogleDrive': return 'bg-[#34A853] hover:bg-[#2e9148]';
           default: return 'bg-blue-600 hover:bg-blue-700';
       }
   };
@@ -1064,7 +1245,7 @@ export const Editor: React.FC<EditorProps> = ({
       <ClickUpModal 
         isOpen={isClickUpModalOpen} 
         onClose={() => { setIsClickUpModalOpen(false); setExportError(null); }}
-        onExport={handleExportToClickUp}
+        onExport={handleExportToClickUpWithFallback}
         loading={isExporting}
         slides={slides}
         activeSlideId={activeSlideId}
@@ -1072,6 +1253,7 @@ export const Editor: React.FC<EditorProps> = ({
         onConfigure={() => { setIsClickUpModalOpen(false); setIntegrationModalSource('ClickUp'); }}
       />
       
+      {/* ... other modals ... */}
       <SlackModal 
         isOpen={isSlackModalOpen}
         onClose={() => { setIsSlackModalOpen(false); setExportError(null); }}
@@ -1235,14 +1417,6 @@ export const Editor: React.FC<EditorProps> = ({
                    >
                        <Settings size={16} /> Connect Tools
                    </button>
-               ) : connectedSources.length === 1 ? (
-                   <button 
-                        onClick={() => openModalFor(connectedSources[0])}
-                        className={`flex items-center gap-2 px-4 py-2 text-white text-xs font-bold rounded-lg shadow-sm transition-colors ${getSourceColor(connectedSources[0])}`}
-                   >
-                       {getSourceIcon(connectedSources[0])}
-                       Export to {connectedSources[0]}
-                   </button>
                ) : (
                    <>
                        <button 
@@ -1256,7 +1430,7 @@ export const Editor: React.FC<EditorProps> = ({
                        {isExportDropdownOpen && (
                            <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-xl border border-slate-200 dark:border-[#272727] overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
                                <div className="p-1">
-                                   {connectedSources.map(source => (
+                                   {connectedSources.filter(s => s !== 'GoogleDrive').map(source => (
                                        <button 
                                             key={source}
                                             onClick={() => openModalFor(source)}
