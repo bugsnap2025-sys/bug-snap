@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ClickUpExportMode, Slide, ClickUpHierarchyList, IntegrationConfig } from '../types';
-import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight, HardDrive } from 'lucide-react';
+import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight, HardDrive, ShieldAlert } from 'lucide-react';
 import { extractListId, getAllClickUpLists } from '../services/clickUpService';
 import { generateAIReportMetadata } from '../services/geminiService';
 import { requestDriveToken } from '../services/googleDriveService';
@@ -164,8 +164,11 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   }
 
   const isCorsDemoError = error?.includes('corsdemo');
-  const isStorageFullError = error?.includes('Storage Full') || error?.includes('connect Google Drive');
-  const cleanError = error?.replace(/ClickUp API Error: \d+ - /, '');
+  const isStorageFullError = error?.includes('Storage Full') && !error?.includes('accessNotConfigured');
+  const isDriveApiDisabled = error?.includes('accessNotConfigured') || error?.includes('Google Drive API has not been used');
+  
+  // Extract a cleaner error message for generic display
+  const cleanError = error?.replace(/ClickUp API Error: \d+ - /, '').replace(/Error: /, '');
 
   const handleExport = () => {
       if (!listId) return;
@@ -234,6 +237,32 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                         </button>
                     </div>
                  </div>
+              ) : isDriveApiDisabled ? (
+                 <div className="flex flex-col gap-3">
+                    <div className="flex items-start gap-2 font-bold text-amber-700 dark:text-amber-400">
+                        <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+                        <span>Google Drive API Not Enabled</span>
+                    </div>
+                    <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
+                        The backup to Google Drive failed because the <strong>Google Drive API</strong> is not enabled for this project.
+                    </p>
+                    <div className="mt-1 flex gap-3">
+                        <a 
+                            href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=1070648127842" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="flex items-center justify-center gap-2 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-100 px-4 py-2 rounded-lg font-medium transition-colors text-xs border border-amber-200 dark:border-amber-800"
+                        >
+                            <ExternalLink size={14} /> Enable Drive API
+                        </a>
+                        <button 
+                            onClick={handleExport}
+                            className="flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-xs"
+                        >
+                            <RefreshCw size={14} /> Retry
+                        </button>
+                    </div>
+                 </div>
               ) : isStorageFullError ? (
                  <div className="flex flex-col gap-3">
                     <div className="flex items-start gap-2 font-bold text-red-800 dark:text-red-300">
@@ -258,13 +287,15 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                         <AlertCircle size={16} className="mt-0.5 shrink-0" />
                         <span>Export Failed</span>
                     </div>
-                    <span className="pl-6 opacity-90">{cleanError || error}</span>
+                    <span className="pl-6 opacity-90 max-h-40 overflow-y-auto text-xs font-mono bg-red-50 dark:bg-black/20 p-2 rounded mt-1">
+                        {cleanError || error}
+                    </span>
                  </div>
               )}
             </div>
           )}
 
-          {!isCorsDemoError && (
+          {!isCorsDemoError && !isDriveApiDisabled && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
                 
                 {/* Left Column: AI Smart Details */}
@@ -433,7 +464,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
             Cancel
           </button>
           
-          {!isCorsDemoError && (
+          {!isCorsDemoError && !isDriveApiDisabled && (
              <button 
                onClick={handleExport}
                disabled={loading || !listId || isGeneratingAI || isAuthorizingDrive}
