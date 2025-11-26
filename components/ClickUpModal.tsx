@@ -115,13 +115,16 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   const handleEnableDriveBackup = async () => {
       setIsAuthorizingDrive(true);
       try {
+          // 1. Request Token (OAuth with drive.file scope)
           const token = await requestDriveToken();
+          
+          // 2. Save Token
           const saved = localStorage.getItem('bugsnap_config');
           const config = saved ? JSON.parse(saved) : {};
           config.googleDriveToken = token;
           localStorage.setItem('bugsnap_config', JSON.stringify(config));
           
-          // Retry export immediately
+          // 3. Retry Export Immediately (The Editor will pick up the token)
           handleExport();
       } catch (e) {
           console.error("Drive Auth Failed", e);
@@ -165,7 +168,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
 
   const isCorsDemoError = error?.includes('corsdemo');
   const isStorageFullError = error?.includes('Storage Full') && !error?.includes('accessNotConfigured');
-  const isDriveApiDisabled = error?.includes('accessNotConfigured') || error?.includes('Google Drive API has not been used');
+  const isDriveApiDisabled = error?.includes('accessNotConfigured') || error?.includes('Google Drive API');
   
   // Extract a cleaner error message for generic display
   const cleanError = error?.replace(/ClickUp API Error: \d+ - /, '').replace(/Error: /, '');
@@ -244,11 +247,12 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                         <span>Google Drive API Not Enabled</span>
                     </div>
                     <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
-                        The backup to Google Drive failed because the <strong>Google Drive API</strong> is not enabled for this project.
+                        The Project linked to the Client ID has not enabled the Drive API. 
+                        <br/><span className="text-xs opacity-75">If this is your project, enable it in Cloud Console. If not, please provide your own Client ID in the code/env.</span>
                     </p>
                     <div className="mt-1 flex gap-3">
                         <a 
-                            href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=1070648127842" 
+                            href="https://console.cloud.google.com/apis/library/drive.googleapis.com" 
                             target="_blank" 
                             rel="noreferrer"
                             className="flex items-center justify-center gap-2 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-100 px-4 py-2 rounded-lg font-medium transition-colors text-xs border border-amber-200 dark:border-amber-800"
