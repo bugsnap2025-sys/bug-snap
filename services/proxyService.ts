@@ -4,10 +4,10 @@
  * Tries multiple CORS proxies in sequence to bypass browser restrictions.
  * 
  * Proxies used:
- * 1. thingproxy (Primary: Reliable)
- * 2. codetabs (Backup: Good for GETs)
- * 3. corsproxy.io (Backup: Fast but aggressive rate limits)
- * 4. cors-anywhere (Demo: Strictly rate limited, requires activation)
+ * 1. corsproxy.io (Primary: Fast, supports most headers)
+ * 2. cors-anywhere (Backup: Reliable but requires demo activation)
+ * 3. allorigins (Backup: Good uptime, using raw mode)
+ * 4. thingproxy (Legacy: Frequent rate limits)
  */
 
 interface ProxyProvider {
@@ -18,16 +18,6 @@ interface ProxyProvider {
 
 const PROXY_PROVIDERS: ProxyProvider[] = [
   {
-    name: 'thingproxy',
-    format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
-    requiresHeaders: false
-  },
-  {
-    name: 'codetabs',
-    format: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-    requiresHeaders: false
-  },
-  {
     name: 'corsproxy.io',
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     requiresHeaders: false
@@ -36,6 +26,16 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     name: 'cors-anywhere',
     format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
     requiresHeaders: true // sets x-requested-with
+  },
+  {
+    name: 'allorigins',
+    format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    requiresHeaders: false
+  },
+  {
+    name: 'thingproxy',
+    format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+    requiresHeaders: false
   }
 ];
 
