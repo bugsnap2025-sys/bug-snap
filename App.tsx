@@ -275,6 +275,17 @@ const App: React.FC = () => {
     setIsInIframe(window.self !== window.top);
   }, []);
 
+  // Listen for navigation to integrations
+  useEffect(() => {
+    const handleNavigateToIntegrations = () => {
+      setView(AppView.INTEGRATIONS);
+    };
+    window.addEventListener('navigate-to-integrations', handleNavigateToIntegrations);
+    return () => {
+      window.removeEventListener('navigate-to-integrations', handleNavigateToIntegrations);
+    };
+  }, []);
+
   // Click outside listener for menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

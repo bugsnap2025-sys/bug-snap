@@ -58,6 +58,9 @@ export interface IntegrationConfig {
   zohoDC?: string; // Zoho Data Center (eu, com, etc.)
   zohoSprintsToken?: string; // Zoho Sprints OAuth Token
   zohoSprintsDC?: string; // Zoho Sprints Data Center
+  figmaToken?: string; // Figma Personal Access Token
+  figmaFileKey?: string; // Figma File Key (from URL)
+  figmaNodeId?: string; // Figma Node ID to compare
   googleDriveToken?: string; // Google Drive Access Token for Backup
 }
 
@@ -74,7 +77,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive' | 'Figma';
 
 export interface ReportedIssue {
   id: string;

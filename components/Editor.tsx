@@ -18,6 +18,7 @@ import { AsanaModal } from './AsanaModal';
 import { WebhookModal } from './WebhookModal';
 import { ZohoSprintsModal } from './ZohoSprintsModal';
 import { IntegrationModal } from './IntegrationModal';
+import { FigmaReviewer } from './FigmaReviewer';
 import { useToast } from './ToastProvider';
 import { jsPDF } from "jspdf";
 import { 
@@ -51,6 +52,7 @@ import {
   Share2,
   ChevronDown,
   Settings,
+  Sparkles
   HardDrive
 } from 'lucide-react';
 
@@ -119,6 +121,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [createdTaskUrl, setCreatedTaskUrl] = useState<string | null>(null);
   const [createdTaskPlatform, setCreatedTaskPlatform] = useState<string>('ClickUp');
+  const [isFigmaReviewerOpen, setIsFigmaReviewerOpen] = useState(false);
   
   // Integration Modal State
   const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
@@ -153,6 +156,7 @@ export const Editor: React.FC<EditorProps> = ({
               if (config.asanaToken) connected.push('Asana');
               if (config.webhookUrl) connected.push('Webhook');
               if (config.zohoSprintsToken) connected.push('ZohoSprints');
+              // Note: Figma is not added to connectedSources as it's a review tool, not an export tool
               if (config.googleDriveToken) connected.push('GoogleDrive');
               setConnectedSources(connected);
           }
@@ -784,6 +788,15 @@ export const Editor: React.FC<EditorProps> = ({
         if (mode === 'current') {
             const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
             taskUrl = task.url;
+            try {
+                const blob = await optimizeImage(activeSlide);
+                await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
+            } catch (attachError) {
+                // Task created successfully, but attachment failed - log warning but don't fail the export
+                console.warn('Task created but attachment upload failed:', attachError);
+                const errorMsg = attachError instanceof Error ? attachError.message : 'Attachment upload failed';
+                addToast(`Task created successfully, but attachment failed: ${errorMsg}`, 'info');
+            }
             tasksCreated.push(task);
             
             const blob = await optimizeImage(activeSlide);
@@ -794,8 +807,13 @@ export const Editor: React.FC<EditorProps> = ({
             tasksCreated.push(masterTask);
 
             for (const slide of slides) {
-                const blob = await optimizeImage(slide);
-                await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
+                try {
+                    const blob = await optimizeImage(slide);
+                    await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
+                } catch (attachError) {
+                    console.warn(`Failed to upload attachment for slide ${slide.name}:`, attachError);
+                    // Continue with next slide
+                }
             }
         } else if (mode === 'all_subtasks') {
             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
@@ -804,8 +822,13 @@ export const Editor: React.FC<EditorProps> = ({
 
             for (const slide of slides) {
                 const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
-                const blob = await optimizeImage(slide);
-                await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
+                try {
+                    const blob = await optimizeImage(slide);
+                    await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
+                } catch (attachError) {
+                    console.warn(`Failed to upload attachment for subtask ${slide.name}:`, attachError);
+                    // Continue with next slide
+                }
             }
         }
         
@@ -1207,6 +1230,7 @@ export const Editor: React.FC<EditorProps> = ({
           case 'Asana': return <CheckCircle2 size={16} />;
           case 'Webhook': return <Webhook size={16} />;
           case 'ZohoSprints': return <Database size={16} />;
+          case 'Figma': return <Sparkles size={16} />;
           case 'GoogleDrive': return <HardDrive size={16} />;
           default: return <Share2 size={16} />;
       }
@@ -1221,6 +1245,7 @@ export const Editor: React.FC<EditorProps> = ({
           case 'Asana': return 'bg-[#F06A6A] hover:bg-[#e05a5a]';
           case 'Webhook': return 'bg-pink-600 hover:bg-pink-700';
           case 'ZohoSprints': return 'bg-teal-500 hover:bg-teal-600';
+          case 'Figma': return 'bg-purple-600 hover:bg-purple-700';
           case 'GoogleDrive': return 'bg-[#34A853] hover:bg-[#2e9148]';
           default: return 'bg-blue-600 hover:bg-blue-700';
       }
@@ -1318,6 +1343,18 @@ export const Editor: React.FC<EditorProps> = ({
         onConfigure={() => { setIsZohoSprintsModalOpen(false); setIntegrationModalSource('ZohoSprints'); }}
       />
 
+      <FigmaReviewer
+        slide={activeSlide}
+        isOpen={isFigmaReviewerOpen}
+        onClose={() => setIsFigmaReviewerOpen(false)}
+        onOpenIntegrations={() => {
+          setIsFigmaReviewerOpen(false);
+          // This will be handled by the parent App component
+          // For now, we'll use a custom event
+          window.dispatchEvent(new CustomEvent('navigate-to-integrations'));
+        }}
+      />
+
       {/* Toolbar */}
       <div className="h-14 border-b border-slate-200 dark:border-[#272727] flex items-center justify-between px-4 bg-white dark:bg-[#0f0f0f] shrink-0 z-20 transition-colors">
         <div className="flex items-center h-full">
@@ -1387,6 +1424,17 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+           <button 
+             onClick={() => setIsFigmaReviewerOpen(true)}
+             className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 px-3 py-1.5 rounded border border-purple-200 dark:border-purple-800 text-xs font-semibold transition-colors"
+             title="Compare with Figma Design"
+           >
+             <Sparkles size={14} />
+             Figma Review
+           </button>
+           
+           <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
+           
            <button 
              onClick={handleGeneratePDF}
              disabled={isProcessing}
