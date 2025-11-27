@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { useToast } from './ToastProvider';
-import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook, Sparkles } from 'lucide-react';
+import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook, HardDrive,Sparkles } from 'lucide-react';
 import { IntegrationModal } from './IntegrationModal';
 
 export const IntegrationsHub: React.FC = () => {
@@ -47,6 +47,8 @@ export const IntegrationsHub: React.FC = () => {
           newConfig.figmaToken = undefined;
           newConfig.figmaFileKey = undefined;
           newConfig.figmaNodeId = undefined;
+      } else if (source === 'GoogleDrive') {
+          newConfig.googleDriveToken = undefined;
       }
       
       setConfig(newConfig);
@@ -63,6 +65,7 @@ export const IntegrationsHub: React.FC = () => {
           case 'Asana': return !!config.asanaToken;
           case 'Webhook': return !!config.webhookUrl;
           case 'Figma': return !!config.figmaToken && !!config.figmaFileKey;
+          case 'GoogleDrive': return !!config.googleDriveToken;
       }
   };
 
@@ -109,6 +112,38 @@ export const IntegrationsHub: React.FC = () => {
                         className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-[#7B68EE] text-white hover:bg-[#6c5ce7] shadow-md hover:shadow-lg"
                     >
                         Connect ClickUp <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Google Drive Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-blue-500 dark:hover:border-blue-500 transition-all group relative overflow-hidden">
+                {isConnected('GoogleDrive') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <HardDrive size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Google Drive</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">
+                    Backup storage for when your issue tracker (like ClickUp) is full. Images are saved to Drive and linked in the task.
+                </p>
+                
+                {isConnected('GoogleDrive') ? (
+                    <button 
+                        onClick={() => handleDisconnect('GoogleDrive')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                        onClick={() => setActiveModal('GoogleDrive')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
+                    >
+                        Connect Drive <ArrowRight size={16} />
                     </button>
                 )}
             </div>

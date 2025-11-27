@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { ClickUpExportMode, Slide, ClickUpHierarchyList, IntegrationConfig } from '../types';
-import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight } from 'lucide-react';
+import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight, HardDrive, ShieldAlert } from 'lucide-react';
 import { extractListId, getAllClickUpLists } from '../services/clickUpService';
 import { generateAIReportMetadata } from '../services/geminiService';
+import { requestDriveToken } from '../services/googleDriveService';
 
 interface ClickUpModalProps {
   isOpen: boolean;
@@ -35,6 +37,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [isAuthorizingDrive, setIsAuthorizingDrive] = useState(false);
 
   const activeSlide = slides.find(s => s.id === activeSlideId) || slides[0];
 
@@ -109,6 +112,27 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
       }
   };
 
+  const handleEnableDriveBackup = async () => {
+      setIsAuthorizingDrive(true);
+      try {
+          // 1. Request Token (OAuth with drive.file scope)
+          const token = await requestDriveToken();
+          
+          // 2. Save Token
+          const saved = localStorage.getItem('bugsnap_config');
+          const config = saved ? JSON.parse(saved) : {};
+          config.googleDriveToken = token;
+          localStorage.setItem('bugsnap_config', JSON.stringify(config));
+          
+          // 3. Retry Export Immediately (The Editor will pick up the token)
+          handleExport();
+      } catch (e) {
+          console.error("Drive Auth Failed", e);
+      } finally {
+          setIsAuthorizingDrive(false);
+      }
+  };
+
   if (!isOpen) return null;
 
   // Not Configured State
@@ -143,7 +167,11 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   }
 
   const isCorsDemoError = error?.includes('corsdemo');
-  const cleanError = error?.replace(/ClickUp API Error: \d+ - /, '');
+  const isStorageFullError = error?.includes('Storage Full') && !error?.includes('accessNotConfigured');
+  const isDriveApiDisabled = error?.includes('accessNotConfigured') || error?.includes('Google Drive API');
+  
+  // Extract a cleaner error message for generic display
+  const cleanError = error?.replace(/ClickUp API Error: \d+ - /, '').replace(/Error: /, '');
 
   const handleExport = () => {
       if (!listId) return;
@@ -212,19 +240,66 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                         </button>
                     </div>
                  </div>
+              ) : isDriveApiDisabled ? (
+                 <div className="flex flex-col gap-3">
+                    <div className="flex items-start gap-2 font-bold text-amber-700 dark:text-amber-400">
+                        <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+                        <span>Google Drive API Not Enabled</span>
+                    </div>
+                    <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
+                        The Project linked to the Client ID has not enabled the Drive API. 
+                        <br/><span className="text-xs opacity-75">If this is your project, enable it in Cloud Console. If not, please provide your own Client ID in the code/env.</span>
+                    </p>
+                    <div className="mt-1 flex gap-3">
+                        <a 
+                            href="https://console.cloud.google.com/apis/library/drive.googleapis.com" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="flex items-center justify-center gap-2 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-100 px-4 py-2 rounded-lg font-medium transition-colors text-xs border border-amber-200 dark:border-amber-800"
+                        >
+                            <ExternalLink size={14} /> Enable Drive API
+                        </a>
+                        <button 
+                            onClick={handleExport}
+                            className="flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-xs"
+                        >
+                            <RefreshCw size={14} /> Retry
+                        </button>
+                    </div>
+                 </div>
+              ) : isStorageFullError ? (
+                 <div className="flex flex-col gap-3">
+                    <div className="flex items-start gap-2 font-bold text-red-800 dark:text-red-300">
+                        <HardDrive size={16} className="mt-0.5 shrink-0" />
+                        <span>ClickUp Storage Full</span>
+                    </div>
+                    <p className="text-red-700 dark:text-red-400">
+                        Your ClickUp workspace has reached its storage limit. Enable Google Drive Backup to upload images to Drive and link them in the task instead.
+                    </p>
+                    <button 
+                        onClick={handleEnableDriveBackup}
+                        disabled={isAuthorizingDrive}
+                        className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-xs w-fit"
+                    >
+                        {isAuthorizingDrive ? <Loader2 size={14} className="animate-spin"/> : <HardDrive size={14} />}
+                        Enable Drive Backup & Retry
+                    </button>
+                 </div>
               ) : (
                  <div className="flex flex-col gap-1 text-red-700 dark:text-red-400 break-words">
                     <div className="flex items-start gap-2 font-bold">
                         <AlertCircle size={16} className="mt-0.5 shrink-0" />
                         <span>Export Failed</span>
                     </div>
-                    <span className="pl-6 opacity-90">{cleanError || error}</span>
+                    <span className="pl-6 opacity-90 max-h-40 overflow-y-auto text-xs font-mono bg-red-50 dark:bg-black/20 p-2 rounded mt-1">
+                        {cleanError || error}
+                    </span>
                  </div>
               )}
             </div>
           )}
 
-          {!isCorsDemoError && (
+          {!isCorsDemoError && !isDriveApiDisabled && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
                 
                 {/* Left Column: AI Smart Details */}
@@ -387,16 +462,16 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
         <div className="p-5 border-t border-slate-100 dark:border-[#272727] bg-slate-50 dark:bg-[#0f0f0f] flex justify-end gap-3 shrink-0">
           <button 
             onClick={onClose}
-            disabled={loading}
+            disabled={loading || isAuthorizingDrive}
             className="px-6 py-2.5 text-slate-600 dark:text-zinc-400 font-bold hover:bg-slate-200 dark:hover:bg-[#272727] rounded-xl transition text-sm"
           >
             Cancel
           </button>
           
-          {!isCorsDemoError && (
+          {!isCorsDemoError && !isDriveApiDisabled && (
              <button 
                onClick={handleExport}
-               disabled={loading || !listId || isGeneratingAI}
+               disabled={loading || !listId || isGeneratingAI || isAuthorizingDrive}
                className="px-8 py-2.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white font-bold rounded-xl shadow-md hover:shadow-lg transition flex items-center gap-2 text-sm disabled:opacity-70 disabled:cursor-not-allowed transform active:scale-95"
              >
                {loading ? (

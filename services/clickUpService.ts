@@ -56,15 +56,27 @@ export const validateClickUpToken = async (token: string): Promise<boolean> => {
 
         // For other errors (500, 429), throw error to alert user
         const text = await userRes.text();
-        if (userRes.status === 429 || text.toLowerCase().includes("too many requests")) {
-             throw new Error("Connection busy (Rate Limit). Please try again in a moment.");
+        const lowerText = text.toLowerCase();
+
+        if (userRes.status === 429 || lowerText.includes("too many requests") || lowerText.includes("rate limit")) {
+             throw new Error("Connection busy (Proxy Rate Limit). Please wait a moment and try again.");
         }
+        
+        // Clean up proxy errors that might leak raw HTML
+        if (text.includes("The origin") && text.includes("sent too many requests")) {
+             throw new Error("Connection busy. Please wait a moment and try again.");
+        }
+
         throw new Error(`ClickUp API Error (${userRes.status}): ${text.substring(0, 100)}`);
 
     } catch (error) {
         console.error("Token validation failed:", error);
         if (error instanceof Error) {
-            // If it's a corsdemo or 429 error, propagate it
+            // Sanitize giant HTML errors from proxies
+            if (error.message.includes("The origin") && error.message.includes("sent too many requests")) {
+                throw new Error("Connection busy (Rate Limit). Please wait a moment.");
+            }
+            // If it's a corsdemo or other specific error, propagate it
             throw error;
         }
         // If it's a generic network error (e.g. failed to fetch), throw nicer message
@@ -123,7 +135,8 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
                                 allLists.push({
                                     id: l.id,
                                     name: l.name,
-                                    groupName: `${space.name} (Space)`
+                                    // INJECT WORKSPACE NAME (team.name) FOR CLARITY
+                                    groupName: `[${team.name}] ${space.name} (Space)`
                                 });
                             });
                         }
@@ -147,7 +160,8 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
                                              allLists.push({
                                                  id: l.id,
                                                  name: l.name,
-                                                 groupName: `${space.name} > ${folder.name}`
+                                                 // INJECT WORKSPACE NAME (team.name) FOR CLARITY
+                                                 groupName: `[${team.name}] ${space.name} > ${folder.name}`
                                              });
                                         });
                                     }
@@ -218,6 +232,30 @@ export const createClickUpTask = async ({ listId, token, title, description, par
   }
 };
 
+export const updateClickUpTask = async (taskId: string, token: string, updatePayload: { description?: string }) => {
+    const url = `https://api.clickup.com/api/v2/task/${taskId}`;
+    
+    try {
+        const response = await fetchWithProxy(url, {
+            method: 'PUT',
+            headers: {
+                'Authorization': token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(updatePayload)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`ClickUp Update Error: ${text}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("ClickUp Update Failed", error);
+        throw error;
+    }
+};
+
 export const uploadClickUpAttachment = async (taskId: string, token: string, fileBlob: Blob, filename: string) => {
   const url = `https://api.clickup.com/api/v2/task/${taskId}/attachment`;
   
@@ -240,7 +278,7 @@ export const uploadClickUpAttachment = async (taskId: string, token: string, fil
         // Specific handling for storage limits
         if (text.includes("Over allocated storage")) {
             const sizeInMB = (fileBlob.size / (1024 * 1024)).toFixed(2);
-            throw new Error(`ClickUp Workspace Storage Full. This file is ${sizeInMB}MB. Please delete old files or upgrade plan.`);
+            throw new Error(`Storage Full. The target ClickUp Workspace is full. This happens when targeting a 'Personal' workspace instead of a 'Business' one. Check your Destination List.`);
         }
 
         throw new Error(`Attachment Upload Failed: ${response.status} - ${text}`);

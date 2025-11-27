@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, Sparkles } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, HardDrive ,Sparkles} from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
@@ -9,6 +9,7 @@ import { validateTeamsConnection, extractTeamsInfoFromUrl } from '../services/te
 import { validateAsanaToken } from '../services/asanaService';
 import { validateWebhookUrl } from '../services/webhookService';
 import { validateFigmaConnection, extractFigmaFileKey } from '../services/figmaService';
+import { requestDriveToken } from '../services/googleDriveService';
 
 interface IntegrationModalProps {
   isOpen: boolean;
@@ -149,6 +150,10 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             } catch (validationError: any) {
                 // Re-throw with the specific error message from validation
                 throw new Error(validationError.message || "Figma Authentication Failed. Check your token and file key.");
+        else if (source === 'GoogleDrive') {
+            // No manual validation for Drive, just save config if token present
+            if (!newConfig.googleDriveToken) {
+                throw new Error("Please connect Google Drive first.");
             }
         }
 
@@ -167,6 +172,18 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             setError(err.message || "Validation failed");
         }
     }
+  };
+
+  const handleConnectDrive = async () => {
+      setIsValidating(true);
+      try {
+          const token = await requestDriveToken();
+          setFormData(prev => ({ ...prev, googleDriveToken: token }));
+          setIsValidating(false);
+      } catch (e) {
+          setIsValidating(false);
+          setError("Failed to connect to Google Drive. Popup might be blocked.");
+      }
   };
 
   const handleDisconnect = () => {
@@ -196,6 +213,8 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
           newConfig.figmaToken = undefined;
           newConfig.figmaFileKey = undefined;
           newConfig.figmaNodeId = undefined;
+      } else if (source === 'GoogleDrive') {
+          newConfig.googleDriveToken = undefined;
       }
       
       onSave(newConfig as IntegrationConfig);
@@ -222,6 +241,39 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                     </div>
                 </div>
             );
+        case 'GoogleDrive':
+            return (
+                <div className="space-y-6">
+                    <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
+                        <div className="flex items-center gap-3 mb-3">
+                            <HardDrive className="text-blue-600 dark:text-blue-400" size={24} />
+                            <div>
+                                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Google Drive Backup</h3>
+                                <p className="text-xs text-slate-500 dark:text-zinc-400">Use Drive when ClickUp storage is full.</p>
+                            </div>
+                        </div>
+                        {formData.googleDriveToken ? (
+                            <div className="flex items-center gap-2 text-green-600 dark:text-green-400 text-sm font-bold">
+                                <CheckCircle2 size={16} /> Connected
+                            </div>
+                        ) : (
+                            <button 
+                                onClick={handleConnectDrive}
+                                disabled={isValidating}
+                                className="w-full py-2 bg-white dark:bg-[#272727] border border-slate-200 dark:border-[#3f3f3f] hover:bg-slate-50 dark:hover:bg-[#333] text-slate-700 dark:text-zinc-200 font-bold rounded-lg shadow-sm transition flex items-center justify-center gap-2"
+                            >
+                                {isValidating ? <Loader2 size={16} className="animate-spin" /> : <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" className="w-4 h-4" alt="Drive"/>}
+                                Connect Google Drive
+                            </button>
+                        )}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-zinc-500">
+                        Note: Access tokens expire after 1 hour. If uploads fail, please reconnect here.
+                    </p>
+                </div>
+            );
+        // ... (Other cases remain same, omitting for brevity but included in final XML output by replacing whole file content with strict updates logic if I were only patching, but instructions say replace file)
+        // Re-implementing full switch for completeness as requested.
         case 'Slack':
             return (
                 <div className="space-y-4">
@@ -486,6 +538,8 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Asana': return '#F06A6A';
         case 'Webhook': return '#db2777'; // pink-600
         case 'Figma': return '#9b59b6'; // purple-600
+        case 'Webhook': return '#db2777';
+        case 'GoogleDrive': return '#34A853';
         default: return '#3b82f6';
     }
   };
@@ -499,6 +553,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Asana': return <CheckCircle2 size={20} />;
         case 'Webhook': return <Webhook size={20} />;
         case 'Figma': return <Sparkles size={20} />;
+        case 'GoogleDrive': return <HardDrive size={20} />;
         default: return null;
     }
   };
@@ -509,7 +564,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         <div className="p-4 flex items-center justify-between text-white" style={{ backgroundColor: getColor() }}>
            <div className="flex items-center gap-2 font-bold text-lg">
              {getIcon()}
-             <span>Connect {source}</span>
+             <span>Connect {source === 'GoogleDrive' ? 'Drive' : source}</span>
            </div>
            <button onClick={onClose} className="hover:bg-white/20 p-1 rounded transition">
              <X size={20} />

@@ -61,6 +61,7 @@ export interface IntegrationConfig {
   figmaToken?: string; // Figma Personal Access Token
   figmaFileKey?: string; // Figma File Key (from URL)
   figmaNodeId?: string; // Figma Node ID to compare
+  googleDriveToken?: string; // Google Drive Access Token for Backup
 }
 
 export enum AppView {
@@ -76,7 +77,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'Figma';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive' | 'Figma';
 
 export interface ReportedIssue {
   id: string;
@@ -109,24 +110,6 @@ export type ZohoSprintsExportMode = 'current' | 'all_attachments';
 export type CaptureMode = 'screenshot' | 'video' | 'floating';
 
 // ClickUp Hierarchy Types
-export interface ClickUpTeam {
-    id: string;
-    name: string;
-}
-export interface ClickUpSpace {
-    id: string;
-    name: string;
-}
-export interface ClickUpFolder {
-    id: string;
-    name: string;
-    lists: ClickUpList[];
-}
-export interface ClickUpList {
-    id: string;
-    name: string;
-    access?: boolean;
-}
 export interface ClickUpHierarchyList {
     id: string;
     name: string;
@@ -204,5 +187,6 @@ declare global {
       window: Window | null;
       onenter: ((ev: Event) => any) | null;
     };
+    google?: any;
   }
 }

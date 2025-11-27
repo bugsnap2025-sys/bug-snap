@@ -6,6 +6,12 @@
  * 1. Try DIRECT API call (fastest if CORS allows) 
  * 2. If CORS blocks → Use BACKEND PROXY (our server with CORS configured)
  * 3. If backend down → Use PUBLIC PROXIES (fallback)
+ * Proxies used:
+ * 1. corsproxy.io (Primary: Fast, supports most headers, supports POST)
+ * 2. cors-anywhere (Backup: Reliable but requires demo activation, supports POST)
+ * 3. codetabs (Backup: Good uptime, supports POST)
+ * 4. allorigins (Backup: GET ONLY. Good for reading data, fails on POST)
+ * 5. thingproxy (Legacy: Frequent rate limits)
  */
 
 const BACKEND_PROXY_URL = (import.meta as any).env?.VITE_PROXY_URL || 'http://localhost:3001/api/proxy';
@@ -15,6 +21,7 @@ interface ProxyProvider {
   name: string;
   format: (url: string) => string;
   requiresHeaders?: boolean;
+  methods?: string[]; // If undefined, supports all. If defined, only supports listed.
 }
 
 const FALLBACK_PROXY_PROVIDERS: ProxyProvider[] = [
@@ -24,9 +31,20 @@ const FALLBACK_PROXY_PROVIDERS: ProxyProvider[] = [
     requiresHeaders: false
   },
   {
+    name: 'cors-anywhere',
+    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
+    requiresHeaders: true // sets x-requested-with
+  },
+  {
     name: 'codetabs',
     format: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     requiresHeaders: false
+  },
+  {
+    name: 'allorigins',
+    format: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&t=${Date.now()}`, // Timestamp prevents caching
+    requiresHeaders: false,
+    methods: ['GET', 'HEAD'] // allorigins does not support POST bodies correctly
   },
   {
     name: 'thingproxy',
@@ -149,8 +167,14 @@ const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Pr
  */
 const fetchWithFallbackProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
   let failureResponse: Response | null = null;
+  const method = options.method || 'GET';
 
-  for (const provider of FALLBACK_PROXY_PROVIDERS) {
+  for (const provider of PROXY_PROVIDERS) {
+    // Skip if provider doesn't support the method (e.g. POST to allorigins)
+    if (provider.methods && !provider.methods.includes(method)) {
+        continue;
+    }
+
     try {
       const proxyUrl = provider.format(url);
       
@@ -175,10 +199,6 @@ const fetchWithFallbackProxy = async (url: string, options: RequestInit = {}): P
 
       // Smart Failure Selection:
       // We want to return the most "useful" error response if all proxies fail.
-      // Priority: 
-      // 1. Application Errors (500, 400, 404) - Means we reached the API.
-      // 2. Auth Errors (401, 403) - Means we reached the API but were denied.
-      // 3. Proxy Errors (429) - Least useful, means proxy blocked us.
       
       if (!failureResponse) {
           failureResponse = response;
@@ -186,21 +206,26 @@ const fetchWithFallbackProxy = async (url: string, options: RequestInit = {}): P
           const currentStatus = failureResponse.status;
           const newStatus = response.status;
 
-          // Always upgrade away from 429 (Rate Limit) if the new one isn't 429
+          // Prefer Application Errors (400, 401, 404, 500) over Proxy Errors (429, 503)
+          // If the current saved response is a Rate Limit (429), and we have a new one that isn't, take the new one.
           if (currentStatus === 429 && newStatus !== 429) {
               failureResponse = response;
           }
-          // Upgrade away from 401/403 (Auth) to a "Real" error (like 500 or 400) if available
-          // This prevents false "Invalid Token" errors if a proxy stripped headers
-          else if ((currentStatus === 401 || currentStatus === 403) && (newStatus !== 401 && newStatus !== 403 && newStatus !== 429)) {
+          // Prefer Auth errors (401/403) as they usually mean we reached the destination
+          else if ((currentStatus !== 401 && currentStatus !== 403) && (newStatus === 401 || newStatus === 403)) {
               failureResponse = response;
           }
       }
       
-      console.warn(`Fallback proxy ${provider.name} returned status ${response.status}. Trying next...`);
+      // console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next...`);
       
     } catch (err: any) {
-      console.warn(`Fallback proxy ${provider.name} failed:`, err);
+      // console.warn(`Proxy ${provider.name} failed:`, err);
+      
+      // If it's the specific lock error, stop trying and throw immediately to prompt user
+      if (err.message === 'corsdemo_required') {
+          throw new Error(`corsdemo_required`);
+      }
     }
   }
 

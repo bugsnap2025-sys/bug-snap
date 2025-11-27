@@ -26,8 +26,17 @@ import {
   Trash2
 } from 'lucide-react';
 
-// REPLACE WITH YOUR ACTUAL GOOGLE CLIENT ID FROM GOOGLE CLOUD CONSOLE
-const GOOGLE_CLIENT_ID: string = "1070648127842-br5nqmcsqq2ufbd4hpajfu8llu0an9t8.apps.googleusercontent.com";
+// Helper to get Client ID from Env or Fallback
+const getClientId = () => {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GOOGLE_CLIENT_ID) {
+        // @ts-ignore
+        return import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    }
+    return "1070648127842-br5nqmcsqq2ufbd4hpajfu8llu0an9t8.apps.googleusercontent.com";
+};
+
+const GOOGLE_CLIENT_ID = getClientId();
 
 // --- Floating Widget Component (Rendered in PIP Window) ---
 // Using inline styles to prevent FOUC (Flash of Unstyled Content) in the new window context
@@ -910,23 +919,6 @@ const App: React.FC = () => {
                    onCaptureScreen={handleCaptureClick}
                    onRecordVideo={handleVideoRecord}
                    onClose={handleCloseSession}
-                   // Pass props to control the new sidebar add button logic if needed, or just handle via Editor internal state if moved here.
-                   // Wait, Editor handles layout. The sidebar is INSIDE Editor component in my provided file structure?
-                   // NO. App.tsx handles the sidebar if view === EDITOR?
-                   // Actually, looking at the provided App.tsx, the Editor component HAS the sidebar inside it.
-                   // Wait, let me double check where the sidebar code is.
-                   // "const Editor: React.FC<EditorProps> = ..." in components/Editor.tsx HAS the sidebar.
-                   // BUT in the App.tsx file I am editing, the App component ALSO has a sidebar structure if I look closely?
-                   // No, the provided App.tsx just renders <Editor ... />.
-                   // Ah, wait. The file content provided for App.tsx in the PROMPT shows the sidebar logic INSIDE App.tsx?
-                   // Let me re-read the App.tsx provided in the prompt.
-                   // NO. The App.tsx in the prompt just renders <Editor />.
-                   // The SIDEBAR code is in components/Editor.tsx.
-                   // I need to update components/Editor.tsx, NOT App.tsx?
-                   // Let me check the file list provided.
-                   // "START OF FILE components/Editor.tsx"
-                   // Yes, the sidebar is in Editor.tsx.
-                   // I must update Editor.tsx.
                  />
                )}
                {view === AppView.INTEGRATIONS && <IntegrationsHub />}
