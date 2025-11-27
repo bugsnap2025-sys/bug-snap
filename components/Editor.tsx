@@ -52,7 +52,7 @@ import {
   Share2,
   ChevronDown,
   Settings,
-  Sparkles
+  Sparkles,
   HardDrive
 } from 'lucide-react';
 
