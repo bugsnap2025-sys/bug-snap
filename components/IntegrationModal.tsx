@@ -150,8 +150,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             } catch (validationError: any) {
                 // Re-throw with the specific error message from validation
                 throw new Error(validationError.message || "Figma Authentication Failed. Check your token and file key.");
-            }
-        }
+            }}
         else if (source === 'GoogleDrive') {
             // No manual validation for Drive, just save config if token present
             if (!newConfig.googleDriveToken) {
