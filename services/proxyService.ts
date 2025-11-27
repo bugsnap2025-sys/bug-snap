@@ -1,22 +1,23 @@
-
 /**
- * Multi-Proxy Architecture
- * Tries multiple CORS proxies in sequence to bypass browser restrictions.
+ * Smart Proxy Service
+ * Tries direct API calls first (if CORS allows), then falls back to proxies.
  * 
- * Proxies used:
- * 1. corsproxy.io (Primary: Fast, reliable)
- * 2. codetabs (Backup)
- * 3. thingproxy (Backup)
- * 4. cors-anywhere (Demo: Strictly rate limited, requires activation)
+ * Strategy:
+ * 1. Try DIRECT API call (fastest if CORS allows) 
+ * 2. If CORS blocks → Use BACKEND PROXY (our server with CORS configured)
+ * 3. If backend down → Use PUBLIC PROXIES (fallback)
  */
 
+const BACKEND_PROXY_URL = (import.meta as any).env?.VITE_PROXY_URL || 'http://localhost:3001/api/proxy';
+
+// Fallback proxies (only used if backend is unavailable)
 interface ProxyProvider {
   name: string;
   format: (url: string) => string;
   requiresHeaders?: boolean;
 }
 
-const PROXY_PROVIDERS: ProxyProvider[] = [
+const FALLBACK_PROXY_PROVIDERS: ProxyProvider[] = [
   {
     name: 'corsproxy.io',
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
@@ -31,19 +32,125 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     name: 'thingproxy',
     format: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
     requiresHeaders: false
-  },
-  // allorigins removed: It strips Authorization headers, causing false 401s.
-  {
-    name: 'cors-anywhere',
-    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
-    requiresHeaders: true // sets x-requested-with
   }
 ];
 
-export const fetchWithProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
+/**
+ * Tries direct API call first (if CORS allows it)
+ */
+const fetchDirect = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: options.signal
+    });
+    // If we get a response (even if error status), CORS worked!
+    return response;
+  } catch (error: any) {
+    // CORS blocked or network error - check if it's a CORS error
+    if (error.name === 'AbortError') {
+      throw error; // Re-throw abort errors as-is
+    }
+    if (error.message?.includes('CORS') || error.message?.includes('Failed to fetch') || error.name === 'TypeError') {
+      throw new Error('CORS_BLOCKED');
+    }
+    throw error;
+  }
+};
+
+/**
+ * Fetches using our backend proxy (primary method)
+ */
+const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  const isFormData = options.body instanceof FormData;
+  
+  // Convert headers to plain object
+  const headers: Record<string, string> = {};
+  if (options.headers) {
+    const headersObj = options.headers instanceof Headers 
+      ? Object.fromEntries(options.headers.entries())
+      : options.headers;
+    
+    Object.entries(headersObj).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        headers[key] = value;
+      }
+    });
+  }
+
+  // Build request to backend proxy
+  let proxyRequest: RequestInit;
+  let proxyUrl: string;
+  const method = (options.method || 'GET').toUpperCase();
+
+  if (isFormData) {
+    // For FormData: append URL as query param and send FormData as-is
+    proxyUrl = `${BACKEND_PROXY_URL}?url=${encodeURIComponent(url)}`;
+    proxyRequest = {
+      method: method,
+      headers: headers, // Keep auth headers, but don't set Content-Type (browser will set it with boundary)
+      body: options.body as FormData
+    };
+  } else if (method === 'GET' || method === 'HEAD') {
+    // For GET/HEAD: send URL as query parameter, no body allowed
+    proxyUrl = `${BACKEND_PROXY_URL}?url=${encodeURIComponent(url)}`;
+    proxyRequest = {
+      method: method,
+      headers: headers
+      // No body for GET/HEAD requests
+    };
+  } else {
+    // For POST/PUT/PATCH/DELETE: send URL and body in request body
+    proxyUrl = BACKEND_PROXY_URL;
+    let bodyData: any = {};
+    
+    if (options.body) {
+      if (typeof options.body === 'string') {
+        try {
+          bodyData = JSON.parse(options.body);
+        } catch {
+          bodyData = { body: options.body };
+        }
+      } else {
+        bodyData = options.body;
+      }
+    }
+    
+    proxyRequest = {
+      method: method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers
+      },
+      body: JSON.stringify({ url, ...bodyData })
+    };
+  }
+
+  const response = await fetch(proxyUrl, {
+    ...proxyRequest,
+    signal: options.signal
+  });
+  
+  // If backend proxy is working, return the response
+  if (response.ok || response.status < 500) {
+    return response;
+  }
+
+  // If backend is down (5xx), throw to trigger fallback
+  if (response.status >= 500) {
+    throw new Error('Backend proxy unavailable');
+  }
+
+  return response;
+};
+
+/**
+ * Fetches using fallback public proxies
+ */
+const fetchWithFallbackProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
   let failureResponse: Response | null = null;
 
-  for (const provider of PROXY_PROVIDERS) {
+  for (const provider of FALLBACK_PROXY_PROVIDERS) {
     try {
       const proxyUrl = provider.format(url);
       
@@ -57,20 +164,13 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
 
       const response = await fetch(proxyUrl, {
         ...options,
-        headers
+        headers,
+        signal: options.signal
       });
       
       // If success, return immediately
       if (response.ok) {
         return response;
-      }
-
-      // Handle specific Cors-Anywhere lock (Status 403 with specific body)
-      if (response.status === 403 && provider.name === 'cors-anywhere') {
-         const text = await response.clone().text();
-         if (text.includes('See /corsdemo')) {
-             throw new Error('corsdemo_required'); 
-         }
       }
 
       // Smart Failure Selection:
@@ -97,15 +197,10 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
           }
       }
       
-      console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next...`);
+      console.warn(`Fallback proxy ${provider.name} returned status ${response.status}. Trying next...`);
       
     } catch (err: any) {
-      console.warn(`Proxy ${provider.name} failed:`, err);
-      
-      // If it's the specific lock error, stop trying and throw immediately to prompt user
-      if (err.message === 'corsdemo_required') {
-          throw new Error(`corsdemo_required`);
-      }
+      console.warn(`Fallback proxy ${provider.name} failed:`, err);
     }
   }
 
@@ -115,4 +210,38 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
   }
 
   throw new Error(`Network Error: Unable to connect via any proxy. Please check your connection.`);
+};
+
+/**
+ * Main proxy function: Tries direct call first, then backend proxy, then public proxies
+ */
+export const fetchWithProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  // Step 1: Try direct API call first (best case - no proxy needed!)
+  try {
+    const directResponse = await fetchDirect(url, options);
+    // If we got here, CORS allowed the request! Return it.
+    console.log('✅ Direct API call succeeded (CORS allowed)');
+    return directResponse;
+  } catch (error: any) {
+    // CORS blocked the direct call - we need a proxy
+    if (error.message === 'CORS_BLOCKED') {
+      console.log('⚠️ Direct call blocked by CORS, using proxy...');
+    } else {
+      // Some other error, re-throw it
+      throw error;
+    }
+  }
+
+  // Step 2: Try backend proxy (our controlled server with CORS configured)
+  try {
+    return await fetchWithBackendProxy(url, options);
+  } catch (error: any) {
+    // If backend is unavailable, log and try fallback
+    if (error.message === 'Backend proxy unavailable' || error.message.includes('Failed to fetch')) {
+      console.warn('Backend proxy unavailable, using public fallback proxies...');
+      return await fetchWithFallbackProxy(url, options);
+    }
+    // Re-throw other errors (like network errors)
+    throw error;
+  }
 };

@@ -58,6 +58,9 @@ export interface IntegrationConfig {
   zohoDC?: string; // Zoho Data Center (eu, com, etc.)
   zohoSprintsToken?: string; // Zoho Sprints OAuth Token
   zohoSprintsDC?: string; // Zoho Sprints Data Center
+  figmaToken?: string; // Figma Personal Access Token
+  figmaFileKey?: string; // Figma File Key (from URL)
+  figmaNodeId?: string; // Figma Node ID to compare
 }
 
 export enum AppView {
@@ -73,7 +76,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'Figma';
 
 export interface ReportedIssue {
   id: string;

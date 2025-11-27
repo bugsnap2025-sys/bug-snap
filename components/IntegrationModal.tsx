@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, Sparkles } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
@@ -8,6 +8,7 @@ import { validateJiraCredentials } from '../services/jiraService';
 import { validateTeamsConnection, extractTeamsInfoFromUrl } from '../services/teamsService';
 import { validateAsanaToken } from '../services/asanaService';
 import { validateWebhookUrl } from '../services/webhookService';
+import { validateFigmaConnection, extractFigmaFileKey } from '../services/figmaService';
 
 interface IntegrationModalProps {
   isOpen: boolean;
@@ -128,6 +129,28 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             const isValid = await validateWebhookUrl(newConfig.webhookUrl);
             if (!isValid) throw new Error("Invalid URL format.");
         }
+        else if (source === 'Figma') {
+            if (!newConfig.figmaToken) {
+                throw new Error("Figma Personal Access Token is required.");
+            }
+            if (!newConfig.figmaFileKey) {
+                throw new Error("Figma File Key is required.");
+            }
+            // Extract file key if URL was provided
+            const extractedKey = extractFigmaFileKey(newConfig.figmaFileKey);
+            if (!extractedKey) {
+                throw new Error("Invalid Figma File Key or URL. Please provide a valid file key or URL.");
+            }
+            newConfig.figmaFileKey = extractedKey;
+            // Validate connection with better error handling
+            try {
+                const isValid = await validateFigmaConnection(extractedKey, newConfig.figmaToken);
+                if (!isValid) throw new Error("Figma Authentication Failed. Check your token and file key.");
+            } catch (validationError: any) {
+                // Re-throw with the specific error message from validation
+                throw new Error(validationError.message || "Figma Authentication Failed. Check your token and file key.");
+            }
+        }
 
         setIsValidating(false);
         onSave(newConfig as IntegrationConfig);
@@ -138,6 +161,8 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         if (err.message === 'corsdemo_required') {
             setIsCorsDemoError(true);
             setError("Browser Proxy requires one-time activation.");
+        } else if (err.message?.includes('timeout')) {
+            setError(err.message + " Make sure your backend proxy server is running (npm run server) or check your internet connection.");
         } else {
             setError(err.message || "Validation failed");
         }
@@ -167,6 +192,10 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
           newConfig.asanaWorkspaceId = undefined;
       } else if (source === 'Webhook') {
           newConfig.webhookUrl = undefined;
+      } else if (source === 'Figma') {
+          newConfig.figmaToken = undefined;
+          newConfig.figmaFileKey = undefined;
+          newConfig.figmaNodeId = undefined;
       }
       
       onSave(newConfig as IntegrationConfig);
@@ -369,6 +398,80 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                     </div>
                 </div>
             );
+        case 'Figma':
+            return (
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Personal Access Token</label>
+                        <div className="relative">
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="figd_..."
+                                value={formData.figmaToken || ''}
+                                onChange={(e) => handleChange('figmaToken', e.target.value)}
+                            />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
+                            Get your token from <a href="https://www.figma.com/developers/api#access-tokens" target="_blank" rel="noreferrer" className="text-purple-600 dark:text-purple-400 hover:underline">Figma Settings → Account → Personal Access Tokens</a>
+                        </p>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">File Key or URL</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="abc123xyz456 or https://figma.com/file/abc123xyz456/..."
+                                value={formData.figmaFileKey || ''}
+                                onChange={(e) => handleChange('figmaFileKey', e.target.value)}
+                            />
+                            <LinkIcon className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                        <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                            <p className="text-xs font-semibold text-blue-900 dark:text-blue-200 mb-2">How to find your File Key:</p>
+                            <ol className="text-xs text-blue-800 dark:text-blue-300 space-y-1.5 list-decimal list-inside">
+                                <li>Open your Figma file in the browser</li>
+                                <li>Look at the URL in your address bar</li>
+                                <li>The URL can be in one of these formats:
+                                    <ul className="list-disc list-inside ml-4 mt-1 space-y-1">
+                                        <li><code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/file/KEY/name</code></li>
+                                        <li><code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/design/KEY/name</code> (newer format)</li>
+                                    </ul>
+                                </li>
+                                <li>The <strong>FILE_KEY</strong> is the alphanumeric code after <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">/file/</code> or <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">/design/</code></li>
+                                <li>You can paste the entire URL (with query parameters) or just the file key - we'll extract it automatically!</li>
+                            </ol>
+                            <div className="mt-2 space-y-1">
+                                <p className="text-xs text-blue-700 dark:text-blue-400 font-semibold">Examples:</p>
+                                <p className="text-xs text-blue-700 dark:text-blue-400">
+                                    • <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/file/ABC123xyz/Design-System</code> → Key: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">ABC123xyz</code>
+                                </p>
+                                <p className="text-xs text-blue-700 dark:text-blue-400">
+                                    • <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/design/oCoSfAamXQJdyjlpQMErpx/App?node-id=...</code> → Key: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">oCoSfAamXQJdyjlpQMErpx</code>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Node ID (Optional)</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="1:23"
+                                value={formData.figmaNodeId || ''}
+                                onChange={(e) => handleChange('figmaNodeId', e.target.value)}
+                            />
+                            <Key className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
+                            Specific frame/node to compare. Leave empty to select from all frames in the file.
+                        </p>
+                    </div>
+                </div>
+            );
         default:
             return null;
     }
@@ -382,6 +485,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Teams': return '#5059C9';
         case 'Asana': return '#F06A6A';
         case 'Webhook': return '#db2777'; // pink-600
+        case 'Figma': return '#9b59b6'; // purple-600
         default: return '#3b82f6';
     }
   };
@@ -394,6 +498,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Teams': return <Users size={20} />;
         case 'Asana': return <CheckCircle2 size={20} />;
         case 'Webhook': return <Webhook size={20} />;
+        case 'Figma': return <Sparkles size={20} />;
         default: return null;
     }
   };
