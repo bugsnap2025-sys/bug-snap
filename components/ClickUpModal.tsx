@@ -1,15 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
-import { ClickUpExportMode, Slide, ClickUpHierarchyList, IntegrationConfig } from '../types';
-import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight, HardDrive, ShieldAlert } from 'lucide-react';
-import { extractListId, getAllClickUpLists } from '../services/clickUpService';
+import { ClickUpExportMode, Slide, ClickUpHierarchyList, IntegrationConfig, ReportedIssue } from '../types';
+import { Layers, UploadCloud, AlertCircle, X, ExternalLink, RefreshCw, List, Loader2, Sparkles, Check, FileStack, Image as ImageIcon, ListTree, ArrowRight, HardDrive, ShieldAlert, GitMerge } from 'lucide-react';
+import { extractListId, getAllClickUpLists, fetchClickUpTasks } from '../services/clickUpService';
 import { generateAIReportMetadata } from '../services/geminiService';
 import { requestDriveToken } from '../services/googleDriveService';
 
 interface ClickUpModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onExport: (mode: ClickUpExportMode, listId: string, title: string, description: string) => void;
+  onExport: (mode: ClickUpExportMode, listId: string, title: string, description: string, parentId?: string) => void;
   loading: boolean;
   slides: Slide[];
   activeSlideId: string;
@@ -33,6 +33,11 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   const [isLoadingLists, setIsLoadingLists] = useState(false);
   const [isConfigured, setIsConfigured] = useState(true);
   
+  // Parent Task Selection State
+  const [parentTasks, setParentTasks] = useState<ReportedIssue[]>([]);
+  const [selectedParentId, setSelectedParentId] = useState('');
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+
   // Content State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -67,6 +72,19 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
     }
   }, [isOpen, mode, activeSlideId]);
 
+  // Fetch tasks when List ID changes IF mode is attach_to_task
+  useEffect(() => {
+      if (mode === 'attach_to_task' && listId && isConfigured) {
+          const globalConfig = localStorage.getItem('bugsnap_config');
+          if (globalConfig) {
+              const parsed = JSON.parse(globalConfig);
+              if (parsed.clickUpToken) {
+                  fetchParentTasks(listId, parsed.clickUpToken);
+              }
+          }
+      }
+  }, [listId, mode, isConfigured]);
+
   const fetchLists = async (token: string) => {
       setIsLoadingLists(true);
       try {
@@ -76,6 +94,18 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
           console.error("Failed to load lists in modal", e);
       } finally {
           setIsLoadingLists(false);
+      }
+  };
+
+  const fetchParentTasks = async (lId: string, token: string) => {
+      setIsLoadingTasks(true);
+      try {
+          const tasks = await fetchClickUpTasks(lId, token);
+          setParentTasks(tasks);
+      } catch (e) {
+          console.error("Failed to load parent tasks", e);
+      } finally {
+          setIsLoadingTasks(false);
       }
   };
 
@@ -93,7 +123,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
       setIsGeneratingAI(true);
       try {
           // Determine context based on mode
-          const isSingle = mode === 'current';
+          const isSingle = mode === 'current' || mode === 'attach_to_task';
           const targetSlide = activeSlide; 
           
           const slideName = isSingle ? targetSlide.name : `Bug Report Batch (${slides.length} slides)`;
@@ -175,6 +205,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
 
   const handleExport = () => {
       if (!listId) return;
+      if (mode === 'attach_to_task' && !selectedParentId) return;
       
       // Save the used List ID as preference
       const globalConfig = localStorage.getItem('bugsnap_config');
@@ -187,7 +218,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
          localStorage.setItem('bugsnap_config', JSON.stringify(parsed));
       }
 
-      onExport(mode, listId, title, description);
+      onExport(mode, listId, title, description, selectedParentId);
   };
 
   return (
@@ -352,7 +383,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                 </div>
 
                 {/* Right Column: Settings & Destination */}
-                <div className="flex flex-col gap-6">
+                <div className="flex flex-col gap-6 h-full overflow-y-auto pr-1">
                     
                     {/* Destination List */}
                     <div>
@@ -414,6 +445,25 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                                 </div>
                             </div>
 
+                            {/* Card 4: Attach to Existing Task */}
+                            <div 
+                                onClick={() => setMode('attach_to_task')}
+                                className={`cursor-pointer p-4 rounded-xl border-2 transition-all relative group ${mode === 'attach_to_task' ? 'border-[#7B68EE] bg-[#7B68EE]/5 dark:bg-[#7B68EE]/10 shadow-md' : 'border-slate-100 dark:border-[#272727] bg-white dark:bg-[#1e1e1e] hover:border-slate-300 dark:hover:border-[#444]'}`}
+                            >
+                                <div className="flex items-start gap-4">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${mode === 'attach_to_task' ? 'bg-[#7B68EE] text-white' : 'bg-slate-100 dark:bg-[#272727] text-slate-400'}`}>
+                                        <GitMerge size={18} />
+                                    </div>
+                                    <div>
+                                        <h4 className={`font-bold text-sm mb-1 ${mode === 'attach_to_task' ? 'text-[#7B68EE]' : 'text-slate-700 dark:text-zinc-200'}`}>Attach as Subtask</h4>
+                                        <p className="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                            Adds the current slide as a subtask to an existing task in the list.
+                                        </p>
+                                    </div>
+                                    {mode === 'attach_to_task' && <div className="absolute top-4 right-4 text-[#7B68EE]"><Check size={18} strokeWidth={3} /></div>}
+                                </div>
+                            </div>
+
                             {/* Card 2: All Attachments */}
                             <div 
                                 onClick={() => setMode('all_attachments')}
@@ -426,7 +476,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                                     <div>
                                         <h4 className={`font-bold text-sm mb-1 ${mode === 'all_attachments' ? 'text-[#7B68EE]' : 'text-slate-700 dark:text-zinc-200'}`}>All Slides (One Task)</h4>
                                         <p className="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
-                                            Creates <strong>one master task</strong> and attaches all {slides.length} screenshots to it. Best for grouped evidence.
+                                            Creates <strong>one master task</strong> and attaches all {slides.length} screenshots to it.
                                         </p>
                                     </div>
                                     {mode === 'all_attachments' && <div className="absolute top-4 right-4 text-[#7B68EE]"><Check size={18} strokeWidth={3} /></div>}
@@ -445,7 +495,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                                     <div>
                                         <h4 className={`font-bold text-sm mb-1 ${mode === 'all_subtasks' ? 'text-[#7B68EE]' : 'text-slate-700 dark:text-zinc-200'}`}>All Slides (Subtasks)</h4>
                                         <p className="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
-                                            Creates a parent task, then creates <strong>individual subtasks</strong> for each slide. Best for complex workflows.
+                                            Creates a parent task, then creates <strong>individual subtasks</strong> for each slide.
                                         </p>
                                     </div>
                                     {mode === 'all_subtasks' && <div className="absolute top-4 right-4 text-[#7B68EE]"><Check size={18} strokeWidth={3} /></div>}
@@ -453,6 +503,36 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                             </div>
                         </div>
                     </div>
+
+                    {/* Parent Task Selector (Visible only when 'attach_to_task' is selected) */}
+                    {mode === 'attach_to_task' && (
+                        <div className="bg-[#7B68EE]/5 dark:bg-[#7B68EE]/10 p-4 rounded-xl border border-[#7B68EE]/20 animate-in fade-in slide-in-from-top-1">
+                            <label className="text-sm font-bold text-[#7B68EE] dark:text-[#9d8ef0] flex items-center gap-2 mb-2">
+                                <GitMerge size={16}/> Select Parent Task
+                            </label>
+                            <div className="relative">
+                                <select
+                                    className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#7B68EE] focus:border-transparent p-3 pl-3 pr-10 text-sm font-medium appearance-none text-slate-700 dark:text-zinc-200 outline-none transition-colors cursor-pointer"
+                                    value={selectedParentId}
+                                    onChange={(e) => setSelectedParentId(e.target.value)}
+                                    disabled={isLoadingTasks}
+                                >
+                                    <option value="" disabled>Select a Task...</option>
+                                    {parentTasks.map(task => (
+                                        <option key={task.id} value={task.id}>
+                                            #{task.id} - {task.title.substring(0, 50)}{task.title.length > 50 ? '...' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500 pointer-events-none">
+                                    {isLoadingTasks ? <Loader2 size={16} className="animate-spin text-[#7B68EE]" /> : <div className="border-l border-slate-200 dark:border-[#3f3f3f] pl-3 text-xs font-bold text-slate-300">▼</div>}
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-2">
+                                Showing recent active tasks from the selected list.
+                            </p>
+                        </div>
+                    )}
                 </div>
             </div>
           )}
@@ -471,7 +551,7 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
           {!isCorsDemoError && !isDriveApiDisabled && (
              <button 
                onClick={handleExport}
-               disabled={loading || !listId || isGeneratingAI || isAuthorizingDrive}
+               disabled={loading || !listId || isGeneratingAI || isAuthorizingDrive || (mode === 'attach_to_task' && !selectedParentId)}
                className="px-8 py-2.5 bg-[#7B68EE] hover:bg-[#6c5ce7] text-white font-bold rounded-xl shadow-md hover:shadow-lg transition flex items-center gap-2 text-sm disabled:opacity-70 disabled:cursor-not-allowed transform active:scale-95"
              >
                {loading ? (

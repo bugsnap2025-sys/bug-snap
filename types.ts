@@ -98,7 +98,7 @@ export interface ReportedIssue {
   tags?: string[];
 }
 
-export type ClickUpExportMode = 'current' | 'all_attachments' | 'all_subtasks';
+export type ClickUpExportMode = 'current' | 'all_attachments' | 'all_subtasks' | 'attach_to_task';
 export type SlackExportMode = 'current' | 'all_files' | 'thread';
 export type JiraExportMode = 'current' | 'all_attachments';
 export type TeamsExportMode = 'current' | 'summary';

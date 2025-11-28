@@ -656,7 +656,7 @@ export const Editor: React.FC<EditorProps> = ({
   // ... export handlers ...
 
   // Refactored function with robust fallback support
-  const handleExportToClickUpWithFallback = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
+  const handleExportToClickUpWithFallback = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string, parentId?: string) => {
     setExportError(null);
     const savedConfig = localStorage.getItem('bugsnap_config');
     if (!savedConfig) { setExportError("Please configure ClickUp."); return; }
@@ -681,7 +681,24 @@ export const Editor: React.FC<EditorProps> = ({
             await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
             
             setCreatedTaskUrl(task.url);
-        } 
+        }
+        else if (mode === 'attach_to_task') {
+            if (!parentId) throw new Error("No parent task selected.");
+            const task = await createClickUpTask({ 
+                listId, 
+                token: config.clickUpToken, 
+                title: customTitle || activeSlide.name || 'Bug Report', 
+                description: customDescription || generateTaskDescription(activeSlide),
+                parentId: parentId 
+            });
+            mainTaskId = task.id;
+            mainTaskUrl = task.url;
+            
+            const blob = await optimizeImage(activeSlide);
+            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
+            
+            setCreatedTaskUrl(task.url);
+        }
         else if (mode === 'all_attachments') {
             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
             mainTaskId = masterTask.id;
@@ -726,7 +743,7 @@ export const Editor: React.FC<EditorProps> = ({
              addToast("ClickUp storage full. Using Google Drive backup...", "info");
              try {
                  // Fallback for main task attachment failure
-                 if (mode === 'current') {
+                 if (mode === 'current' || mode === 'attach_to_task') {
                      const blob = await optimizeImage(activeSlide);
                      const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${activeSlide.name}.jpg`);
                      const newDesc = (customDescription || generateTaskDescription(activeSlide)) + `\n\n---\n**Attachment (Drive Backup):** [View Image](${driveFile.webViewLink})`;
