@@ -225,7 +225,14 @@ export const createClickUpTask = async ({ listId, token, title, description, par
       }
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Ensure URL is present (fallback construction)
+    if (!data.url && data.id) {
+        data.url = `https://app.clickup.com/t/${data.id}`;
+    }
+    
+    return data;
   } catch (error) {
     console.error("ClickUp Task Creation Failed:", error);
     throw error;

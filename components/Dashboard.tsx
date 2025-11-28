@@ -4,6 +4,7 @@ import { ReportedIssue, IssueMetric, IntegrationConfig, IntegrationSource, Click
 import { fetchClickUpTasks, getAllClickUpLists } from '../services/clickUpService';
 import { fetchSlackHistory, postSlackMessage, generateDashboardSummary } from '../services/slackService';
 import { fetchJiraIssues } from '../services/jiraService';
+import { postTeamsMessage } from '../services/teamsService';
 import { fetchAsanaTasks, getAsanaWorkspaces, getAsanaProjects } from '../services/asanaService';
 import { fetchZohoSprintsItems } from '../services/zohoSprintsService';
 import { useToast } from './ToastProvider';
@@ -27,7 +28,8 @@ import {
   CreditCard,
   Briefcase,
   Database,
-  Plus
+  Plus,
+  Users
 } from 'lucide-react';
 
 const KPICard = ({ label, value, color, icon }: { label: string, value: string | number, color: string, icon: React.ReactNode }) => {
@@ -114,6 +116,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [searchText, setSearchText] = useState('');
   const [isSharing, setIsSharing] = useState(false);
+  const [isSharingTeams, setIsSharingTeams] = useState(false);
   
   // Integration Modal State
   const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
@@ -131,7 +134,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
              if (config.clickUpToken) connected.push('ClickUp');
              if (config.jiraToken) connected.push('Jira');
              if (config.slackToken) connected.push('Slack');
-             if (config.teamsToken) connected.push('Teams'); // Teams usually push only, but can be source if implemented
+             if (config.teamsWebhookUrl) connected.push('Teams'); // Updated to use webhookUrl check
              if (config.asanaToken) connected.push('Asana');
              if (config.zohoSprintsToken) connected.push('ZohoSprints');
              
@@ -429,6 +432,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
      }
   };
 
+  const handleShareDashboardToTeams = async () => {
+     setIsSharingTeams(true);
+     
+     try {
+        const savedConfig = localStorage.getItem('bugsnap_config');
+        if (!savedConfig) {
+            setIntegrationModalSource('Teams');
+            setIsSharingTeams(false);
+            return;
+        }
+        const config: IntegrationConfig = JSON.parse(savedConfig);
+
+        if (!config.teamsWebhookUrl) {
+            setIntegrationModalSource('Teams');
+            setIsSharingTeams(false);
+            return;
+        }
+
+        addToast("Posting summary to Teams...", 'info');
+
+        // Create Teams-friendly markdown summary
+        const priorityText = (metrics.priorityData || [])
+            .map((p: any) => `- **${p.name}**: ${p.count}`)
+            .join('\n');
+
+        const summary = `**BugSnap Dashboard Report**\n\n` +
+               `✅ **Resolved Issues:** ${metrics.resolvedCount}\n\n` +
+               `⏳ **Pending Issues:** ${metrics.openCount}\n\n` +
+               `**Priority Breakdown:**\n${priorityText || 'No active issues'}`;
+
+        await postTeamsMessage(config.teamsWebhookUrl, undefined, summary);
+        addToast("Dashboard summary shared to Teams!", 'success');
+     } catch (e) {
+         console.error(e);
+         const msg = e instanceof Error ? e.message : "Failed to post to Teams";
+         
+         if (msg.includes('corsdemo')) {
+             addToast(
+                 <span>
+                    Proxy Locked. <a href="https://cors-anywhere.herokuapp.com/corsdemo" target="_blank" className="underline font-bold">Unlock Here</a>
+                 </span>, 
+                 'error'
+             );
+         } else {
+             addToast(msg, 'error');
+         }
+     } finally {
+         setIsSharingTeams(false);
+     }
+  };
+
   const handleSaveIntegration = (newConfig: IntegrationConfig) => {
       try {
         const saved = localStorage.getItem('bugsnap_config');
@@ -621,13 +675,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                     </div>
                  )}
 
-                {/* Share Summary Button */}
+                {/* Share Summary Button (Slack) */}
                  <button 
                     onClick={handleShareDashboardToSlack} 
                     disabled={isSharing}
                     className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-[#4A154B] hover:bg-[#3f1240] rounded-xl shadow-md hover:shadow-lg transition disabled:opacity-50 h-[46px]"
                 >
-                    <Slack size={16} /> <span className="hidden sm:inline">{isSharing ? 'Posting...' : 'Share Summary'}</span>
+                    <Slack size={16} /> <span className="hidden sm:inline">{isSharing ? 'Posting...' : 'Share to Slack'}</span>
+                </button>
+
+                {/* Share Summary Button (Teams) */}
+                <button 
+                    onClick={handleShareDashboardToTeams} 
+                    disabled={isSharingTeams}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-[#5059C9] hover:bg-[#434aa8] rounded-xl shadow-md hover:shadow-lg transition disabled:opacity-50 h-[46px]"
+                >
+                    <Users size={16} /> <span className="hidden sm:inline">{isSharingTeams ? 'Posting...' : 'Share to Teams'}</span>
                 </button>
             </div>
         </div>
