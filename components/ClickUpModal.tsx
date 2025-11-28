@@ -100,7 +100,8 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
   const fetchParentTasks = async (lId: string, token: string) => {
       setIsLoadingTasks(true);
       try {
-          const tasks = await fetchClickUpTasks(lId, token);
+          // Fetch only root tasks to avoid "Cannot make subtasks of subtasks" error
+          const tasks = await fetchClickUpTasks(lId, token, false);
           setParentTasks(tasks);
       } catch (e) {
           console.error("Failed to load parent tasks", e);
@@ -523,13 +524,14 @@ export const ClickUpModal: React.FC<ClickUpModalProps> = ({
                                             #{task.id} - {task.title.substring(0, 50)}{task.title.length > 50 ? '...' : ''}
                                         </option>
                                     ))}
+                                    {parentTasks.length === 0 && <option value="" disabled>No root tasks found in this list</option>}
                                 </select>
                                 <div className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500 pointer-events-none">
                                     {isLoadingTasks ? <Loader2 size={16} className="animate-spin text-[#7B68EE]" /> : <div className="border-l border-slate-200 dark:border-[#3f3f3f] pl-3 text-xs font-bold text-slate-300">▼</div>}
                                 </div>
                             </div>
                             <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-2">
-                                Showing recent active tasks from the selected list.
+                                Showing recent active tasks from the selected list. Subtasks are excluded to prevent nesting errors.
                             </p>
                         </div>
                     )}
