@@ -8,11 +8,23 @@ const PORT = process.env.PORT || 3001;
 const upload = multer();
 
 // Configure CORS to allow requests from your frontend
+// In production, allow requests from any origin (or specify your Vercel domain)
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests) or from allowed origins
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Atlassian-Token', 'Accept', 'User-Agent'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Atlassian-Token', 'X-Figma-Token', 'Accept', 'User-Agent'],
   exposedHeaders: ['Content-Type', 'Authorization']
 }));
 

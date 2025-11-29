@@ -14,7 +14,28 @@
  * 5. thingproxy (Legacy: Frequent rate limits)
  */
 
-const BACKEND_PROXY_URL = (import.meta as any).env?.VITE_PROXY_URL || 'http://localhost:3001/api/proxy';
+// Get backend proxy URL from environment variable
+// In production, this should be set to your backend server URL (e.g., your Vercel serverless function or separate backend)
+// For Vercel, you can create a serverless function at /api/proxy or deploy server.js separately
+const getBackendProxyUrl = () => {
+  const envUrl = (import.meta as any).env?.VITE_PROXY_URL;
+  if (envUrl) return envUrl;
+  
+  // Auto-detect if we're in production and try to use same origin API route
+  // This works if you deploy the proxy as a Vercel serverless function at /api/proxy
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    // Only use same-origin if we're not on localhost (production)
+    if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+      return `${origin}/api/proxy`;
+    }
+  }
+  
+  // Default to localhost for development
+  return 'http://localhost:3001/api/proxy';
+};
+
+const BACKEND_PROXY_URL = getBackendProxyUrl();
 
 // Fallback proxies (only used if backend is unavailable)
 interface ProxyProvider {
@@ -24,16 +45,13 @@ interface ProxyProvider {
   methods?: string[]; // If undefined, supports all. If defined, only supports listed.
 }
 
+// Fallback proxies (only used if backend is unavailable)
+// NOTE: cors-anywhere removed as it requires manual activation
 const FALLBACK_PROXY_PROVIDERS: ProxyProvider[] = [
   {
     name: 'corsproxy.io',
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     requiresHeaders: false
-  },
-  {
-    name: 'cors-anywhere',
-    format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
-    requiresHeaders: true // sets x-requested-with
   },
   {
     name: 'codetabs',
@@ -307,7 +325,8 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
   } catch (error: any) {
     // If backend is unavailable, log and try fallback
     if (error.message === 'Backend proxy unavailable' || error.message.includes('Failed to fetch')) {
-      console.warn('Backend proxy unavailable, using public fallback proxies...');
+      console.warn(`Backend proxy unavailable at ${BACKEND_PROXY_URL}, using public fallback proxies...`);
+      console.warn('To fix this in production, set VITE_PROXY_URL environment variable to your backend server URL');
       return await fetchWithFallbackProxy(url, options);
     }
     // Re-throw other errors (like network errors)
