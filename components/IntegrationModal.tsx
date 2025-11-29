@@ -1,14 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, HardDrive ,Sparkles} from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, HardDrive } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
 import { validateJiraCredentials } from '../services/jiraService';
-import { validateTeamsConnection, extractTeamsInfoFromUrl } from '../services/teamsService';
+import { validateTeamsWebhookUrl } from '../services/teamsService';
 import { validateAsanaToken } from '../services/asanaService';
 import { validateWebhookUrl } from '../services/webhookService';
-import { validateFigmaConnection, extractFigmaFileKey } from '../services/figmaService';
 import { requestDriveToken } from '../services/googleDriveService';
 
 interface IntegrationModalProps {
@@ -48,17 +47,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     setIsCorsDemoError(false);
   };
 
-  const handleTeamsLinkChange = (url: string) => {
-      const { teamId, channelId } = extractTeamsInfoFromUrl(url);
-      if (teamId && channelId) {
-          setFormData(prev => ({
-              ...prev,
-              teamsTeamId: teamId,
-              teamsChannelId: channelId
-          }));
-      }
-  };
-
   const handleSave = async () => {
     let newConfig = { ...formData };
     
@@ -69,9 +57,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     if (newConfig.jiraUrl) newConfig.jiraUrl = newConfig.jiraUrl.trim().replace(/\/$/, '');
     if (newConfig.jiraEmail) newConfig.jiraEmail = newConfig.jiraEmail.trim();
     if (newConfig.jiraToken) newConfig.jiraToken = newConfig.jiraToken.trim();
-    if (newConfig.teamsToken) newConfig.teamsToken = newConfig.teamsToken.trim();
-    if (newConfig.teamsTeamId) newConfig.teamsTeamId = newConfig.teamsTeamId.trim();
-    if (newConfig.teamsChannelId) newConfig.teamsChannelId = newConfig.teamsChannelId.trim();
+    if (newConfig.teamsWebhookUrl) newConfig.teamsWebhookUrl = newConfig.teamsWebhookUrl.trim();
     if (newConfig.asanaToken) newConfig.asanaToken = newConfig.asanaToken.trim();
     if (newConfig.webhookUrl) newConfig.webhookUrl = newConfig.webhookUrl.trim();
 
@@ -110,11 +96,11 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             if (!isValid) throw new Error("Jira Authentication Failed. Check credentials.");
         }
         else if (source === 'Teams') {
-            if (!newConfig.teamsToken || !newConfig.teamsTeamId || !newConfig.teamsChannelId) {
-                throw new Error("All fields (Token, Team ID, Channel ID) are required.");
+            if (!newConfig.teamsWebhookUrl) {
+                throw new Error("Webhook URL is required.");
             }
-            const isValid = await validateTeamsConnection(newConfig.teamsToken, newConfig.teamsTeamId, newConfig.teamsChannelId);
-            if (!isValid) throw new Error("Teams Connection Failed. Check Token/IDs.");
+            const isValid = await validateTeamsWebhookUrl(newConfig.teamsWebhookUrl);
+            if (!isValid) throw new Error("Invalid Microsoft Teams Webhook URL.");
         }
         else if (source === 'Asana') {
             if (!newConfig.asanaToken) {
@@ -130,29 +116,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             const isValid = await validateWebhookUrl(newConfig.webhookUrl);
             if (!isValid) throw new Error("Invalid URL format.");
         }
-        else if (source === 'Figma') {
-            if (!newConfig.figmaToken) {
-                throw new Error("Figma Personal Access Token is required.");
-            }
-            if (!newConfig.figmaFileKey) {
-                throw new Error("Figma File Key is required.");
-            }
-            // Extract file key if URL was provided
-            const extractedKey = extractFigmaFileKey(newConfig.figmaFileKey);
-            if (!extractedKey) {
-                throw new Error("Invalid Figma File Key or URL. Please provide a valid file key or URL.");
-            }
-            newConfig.figmaFileKey = extractedKey;
-            // Validate connection with better error handling
-            try {
-                const isValid = await validateFigmaConnection(extractedKey, newConfig.figmaToken);
-                if (!isValid) throw new Error("Figma Authentication Failed. Check your token and file key.");
-            } catch (validationError: any) {
-                // Re-throw with the specific error message from validation
-                throw new Error(validationError.message || "Figma Authentication Failed. Check your token and file key.");
-            }}
         else if (source === 'GoogleDrive') {
-            // No manual validation for Drive, just save config if token present
             if (!newConfig.googleDriveToken) {
                 throw new Error("Please connect Google Drive first.");
             }
@@ -167,8 +131,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         if (err.message === 'corsdemo_required') {
             setIsCorsDemoError(true);
             setError("Browser Proxy requires one-time activation.");
-        } else if (err.message?.includes('timeout')) {
-            setError(err.message + " Make sure your backend proxy server is running (npm run server) or check your internet connection.");
         } else {
             setError(err.message || "Validation failed");
         }
@@ -202,7 +164,8 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
           newConfig.jiraEmail = undefined;
           newConfig.jiraUrl = undefined;
       } else if (source === 'Teams') {
-          newConfig.teamsToken = undefined;
+          newConfig.teamsWebhookUrl = undefined;
+          newConfig.teamsToken = undefined; // cleanup legacy
           newConfig.teamsTeamId = undefined;
           newConfig.teamsChannelId = undefined;
       } else if (source === 'Asana') {
@@ -210,10 +173,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
           newConfig.asanaWorkspaceId = undefined;
       } else if (source === 'Webhook') {
           newConfig.webhookUrl = undefined;
-      } else if (source === 'Figma') {
-          newConfig.figmaToken = undefined;
-          newConfig.figmaFileKey = undefined;
-          newConfig.figmaNodeId = undefined;
       } else if (source === 'GoogleDrive') {
           newConfig.googleDriveToken = undefined;
       }
@@ -273,8 +232,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                     </p>
                 </div>
             );
-        // ... (Other cases remain same, omitting for brevity but included in final XML output by replacing whole file content with strict updates logic if I were only patching, but instructions say replace file)
-        // Re-implementing full switch for completeness as requested.
         case 'Slack':
             return (
                 <div className="space-y-4">
@@ -355,60 +312,27 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             return (
                  <div className="space-y-4">
                      <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Graph Access Token</label>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Incoming Webhook URL</label>
                         <div className="relative">
                             <input 
-                                type="password" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="Bearer token..."
-                                value={formData.teamsToken || ''}
-                                onChange={(e) => handleChange('teamsToken', e.target.value)}
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="https://your-org.webhook.office.com/..."
+                                value={formData.teamsWebhookUrl || ''}
+                                onChange={(e) => handleChange('teamsWebhookUrl', e.target.value)}
                             />
-                            <Key className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                            <LinkIcon className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
                      </div>
                      
                      <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800">
-                        <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">Auto-fill from Channel Link</label>
-                        <div className="relative">
-                            <input 
-                                type="text" 
-                                className="w-full bg-white dark:bg-[#121212] border border-slate-300 dark:border-[#3f3f3f] rounded-lg p-2 pl-8 text-xs text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="Paste 'Get link to channel' here..."
-                                onChange={(e) => handleTeamsLinkChange(e.target.value)}
-                            />
-                            <LinkIcon className="absolute left-2.5 top-2.5 text-slate-400" size={12} />
-                        </div>
-                        <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1">
-                            Right-click channel &gt; "Get link to channel" &gt; Paste above to auto-fill IDs.
+                        <p className="text-[11px] text-slate-600 dark:text-zinc-300 leading-relaxed">
+                            <strong>How to get this URL:</strong><br/>
+                            1. In Teams, go to the channel you want to post to.<br/>
+                            2. Click <strong>•••</strong> &gt; <strong>Connectors</strong>.<br/>
+                            3. Search for <strong>"Incoming Webhook"</strong> &gt; Click <strong>Configure</strong>.<br/>
+                            4. Give it a name (e.g. BugSnap) &gt; Create &gt; Copy URL.
                         </p>
-                     </div>
-
-                     <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Team ID (GUID)</label>
-                        <div className="relative">
-                            <input 
-                                type="text" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="e.g. 02bd9fd6-8f93-4758-87c3-1fb73740a315"
-                                value={formData.teamsTeamId || ''}
-                                onChange={(e) => handleChange('teamsTeamId', e.target.value)}
-                            />
-                            <Users className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
-                     </div>
-                     <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Channel ID</label>
-                        <div className="relative">
-                            <input 
-                                type="text" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#5059C9] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="19:ExampleChannelId@thread.tacv2"
-                                value={formData.teamsChannelId || ''}
-                                onChange={(e) => handleChange('teamsChannelId', e.target.value)}
-                            />
-                            <Hash className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
                      </div>
                  </div>
             );
@@ -451,80 +375,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                     </div>
                 </div>
             );
-        case 'Figma':
-            return (
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Personal Access Token</label>
-                        <div className="relative">
-                            <input 
-                                type="password" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="figd_..."
-                                value={formData.figmaToken || ''}
-                                onChange={(e) => handleChange('figmaToken', e.target.value)}
-                            />
-                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
-                            Get your token from <a href="https://www.figma.com/developers/api#access-tokens" target="_blank" rel="noreferrer" className="text-purple-600 dark:text-purple-400 hover:underline">Figma Settings → Account → Personal Access Tokens</a>
-                        </p>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">File Key or URL</label>
-                        <div className="relative">
-                            <input 
-                                type="text" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="abc123xyz456 or https://figma.com/file/abc123xyz456/..."
-                                value={formData.figmaFileKey || ''}
-                                onChange={(e) => handleChange('figmaFileKey', e.target.value)}
-                            />
-                            <LinkIcon className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
-                        <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                            <p className="text-xs font-semibold text-blue-900 dark:text-blue-200 mb-2">How to find your File Key:</p>
-                            <ol className="text-xs text-blue-800 dark:text-blue-300 space-y-1.5 list-decimal list-inside">
-                                <li>Open your Figma file in the browser</li>
-                                <li>Look at the URL in your address bar</li>
-                                <li>The URL can be in one of these formats:
-                                    <ul className="list-disc list-inside ml-4 mt-1 space-y-1">
-                                        <li><code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/file/KEY/name</code></li>
-                                        <li><code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/design/KEY/name</code> (newer format)</li>
-                                    </ul>
-                                </li>
-                                <li>The <strong>FILE_KEY</strong> is the alphanumeric code after <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">/file/</code> or <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">/design/</code></li>
-                                <li>You can paste the entire URL (with query parameters) or just the file key - we'll extract it automatically!</li>
-                            </ol>
-                            <div className="mt-2 space-y-1">
-                                <p className="text-xs text-blue-700 dark:text-blue-400 font-semibold">Examples:</p>
-                                <p className="text-xs text-blue-700 dark:text-blue-400">
-                                    • <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/file/ABC123xyz/Design-System</code> → Key: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">ABC123xyz</code>
-                                </p>
-                                <p className="text-xs text-blue-700 dark:text-blue-400">
-                                    • <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">figma.com/design/oCoSfAamXQJdyjlpQMErpx/App?node-id=...</code> → Key: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">oCoSfAamXQJdyjlpQMErpx</code>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Node ID (Optional)</label>
-                        <div className="relative">
-                            <input 
-                                type="text" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-purple-600 focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="1:23"
-                                value={formData.figmaNodeId || ''}
-                                onChange={(e) => handleChange('figmaNodeId', e.target.value)}
-                            />
-                            <Key className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
-                            Specific frame/node to compare. Leave empty to select from all frames in the file.
-                        </p>
-                    </div>
-                </div>
-            );
         default:
             return null;
     }
@@ -537,8 +387,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira': return '#0052CC';
         case 'Teams': return '#5059C9';
         case 'Asana': return '#F06A6A';
-        case 'Webhook': return '#db2777'; // pink-600
-        case 'Figma': return '#9b59b6'; // purple-600
         case 'Webhook': return '#db2777';
         case 'GoogleDrive': return '#34A853';
         default: return '#3b82f6';
@@ -553,7 +401,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Teams': return <Users size={20} />;
         case 'Asana': return <CheckCircle2 size={20} />;
         case 'Webhook': return <Webhook size={20} />;
-        case 'Figma': return <Sparkles size={20} />;
         case 'GoogleDrive': return <HardDrive size={20} />;
         default: return null;
     }

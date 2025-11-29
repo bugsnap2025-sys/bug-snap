@@ -1,11 +1,8 @@
+
 /**
- * Smart Proxy Service
- * Tries direct API calls first (if CORS allows), then falls back to proxies.
+ * Multi-Proxy Architecture
+ * Tries multiple CORS proxies in sequence to bypass browser restrictions.
  * 
- * Strategy:
- * 1. Try DIRECT API call (fastest if CORS allows) 
- * 2. If CORS blocks → Use BACKEND PROXY (our server with CORS configured)
- * 3. If backend down → Use PUBLIC PROXIES (fallback)
  * Proxies used:
  * 1. corsproxy.io (Primary: Fast, supports most headers, supports POST)
  * 2. cors-anywhere (Backup: Reliable but requires demo activation, supports POST)
@@ -250,13 +247,20 @@ const fetchWithFallbackProxy = async (url: string, options: RequestInit = {}): P
 
       const response = await fetch(proxyUrl, {
         ...options,
-        headers,
-        signal: options.signal
+        headers
       });
       
       // If success, return immediately
       if (response.ok) {
         return response;
+      }
+
+      // Handle specific Cors-Anywhere lock (Status 403 with specific body)
+      if (response.status === 403 && provider.name === 'cors-anywhere') {
+         const text = await response.clone().text();
+         if (text.includes('See /corsdemo')) {
+             throw new Error('corsdemo_required'); 
+         }
       }
 
       // Smart Failure Selection:

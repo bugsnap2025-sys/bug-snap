@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { useToast } from './ToastProvider';
-import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook, HardDrive,Sparkles } from 'lucide-react';
+import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook, HardDrive } from 'lucide-react';
 import { IntegrationModal } from './IntegrationModal';
 
 export const IntegrationsHub: React.FC = () => {
@@ -35,6 +35,7 @@ export const IntegrationsHub: React.FC = () => {
           newConfig.jiraUrl = undefined;
           newConfig.jiraEmail = undefined;
       } else if (source === 'Teams') {
+          newConfig.teamsWebhookUrl = undefined;
           newConfig.teamsToken = undefined;
           newConfig.teamsTeamId = undefined;
           newConfig.teamsChannelId = undefined;
@@ -43,10 +44,6 @@ export const IntegrationsHub: React.FC = () => {
           newConfig.asanaWorkspaceId = undefined;
       } else if (source === 'Webhook') {
           newConfig.webhookUrl = undefined;
-      } else if (source === 'Figma') {
-          newConfig.figmaToken = undefined;
-          newConfig.figmaFileKey = undefined;
-          newConfig.figmaNodeId = undefined;
       } else if (source === 'GoogleDrive') {
           newConfig.googleDriveToken = undefined;
       }
@@ -61,10 +58,9 @@ export const IntegrationsHub: React.FC = () => {
           case 'ClickUp': return !!config.clickUpToken; 
           case 'Slack': return !!config.slackToken && !!config.slackChannel;
           case 'Jira': return !!config.jiraToken && !!config.jiraUrl && !!config.jiraEmail;
-          case 'Teams': return !!config.teamsToken && !!config.teamsTeamId && !!config.teamsChannelId;
+          case 'Teams': return !!config.teamsWebhookUrl; // Updated check
           case 'Asana': return !!config.asanaToken;
           case 'Webhook': return !!config.webhookUrl;
-          case 'Figma': return !!config.figmaToken && !!config.figmaFileKey;
           case 'GoogleDrive': return !!config.googleDriveToken;
       }
   };
@@ -210,7 +206,7 @@ export const IntegrationsHub: React.FC = () => {
                     <Users size={32} />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Microsoft Teams</h3>
-                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Send formatted bug reports to channels via Graph API.</p>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Send formatted bug reports to channels via Incoming Webhooks.</p>
                 
                 {isConnected('Teams') ? (
                      <button 
@@ -285,36 +281,6 @@ export const IntegrationsHub: React.FC = () => {
                          className="w-full py-2.5 rounded-lg font-bold text-sm bg-pink-600 text-white hover:bg-pink-700 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
                     >
                         Configure Webhook <ArrowRight size={16} />
-                    </button>
-                )}
-            </div>
-
-            {/* Figma Card */}
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-purple-600 dark:hover:border-purple-600 transition-all group relative overflow-hidden">
-                {isConnected('Figma') && (
-                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
-                        <CheckCircle2 size={12} /> CONNECTED
-                    </div>
-                )}
-                <div className="w-14 h-14 bg-purple-600/10 dark:bg-purple-600/20 text-purple-600 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <Sparkles size={32} />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Figma Design Review</h3>
-                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Compare your screenshots with Figma designs using AI. Get match scores and improvement suggestions.</p>
-                
-                {isConnected('Figma') ? (
-                     <button 
-                        onClick={() => handleDisconnect('Figma')}
-                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
-                    >
-                        <Trash2 size={16} /> Disconnect
-                    </button>
-                ) : (
-                    <button 
-                         onClick={() => setActiveModal('Figma')}
-                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-purple-600 text-white hover:bg-purple-700 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
-                    >
-                        Connect Figma <ArrowRight size={16} />
                     </button>
                 )}
             </div>

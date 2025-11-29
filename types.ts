@@ -48,9 +48,13 @@ export interface IntegrationConfig {
   slackWebhook?: string; // Deprecated in favor of token
   slackToken?: string; // Bot User OAuth Token (xoxb-...)
   slackChannel?: string; // Channel ID (C123456)
-  teamsToken?: string; // Microsoft Graph Access Token
-  teamsTeamId?: string; // Team GUID
-  teamsChannelId?: string; // Channel ID
+  
+  // Teams Configuration
+  teamsWebhookUrl?: string; // Incoming Webhook URL
+  teamsToken?: string; // @deprecated - Legacy Graph API
+  teamsTeamId?: string; // @deprecated - Legacy Graph API
+  teamsChannelId?: string; // @deprecated - Legacy Graph API
+  
   asanaToken?: string; // Asana Personal Access Token
   asanaWorkspaceId?: string; // Default Workspace ID
   webhookUrl?: string; // Custom Webhook URL
@@ -58,9 +62,6 @@ export interface IntegrationConfig {
   zohoDC?: string; // Zoho Data Center (eu, com, etc.)
   zohoSprintsToken?: string; // Zoho Sprints OAuth Token
   zohoSprintsDC?: string; // Zoho Sprints Data Center
-  figmaToken?: string; // Figma Personal Access Token
-  figmaFileKey?: string; // Figma File Key (from URL)
-  figmaNodeId?: string; // Figma Node ID to compare
   googleDriveToken?: string; // Google Drive Access Token for Backup
 }
 
@@ -77,7 +78,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive' | 'Figma';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive';
 
 export interface ReportedIssue {
   id: string;
@@ -97,7 +98,7 @@ export interface ReportedIssue {
   tags?: string[];
 }
 
-export type ClickUpExportMode = 'current' | 'all_attachments' | 'all_subtasks';
+export type ClickUpExportMode = 'current' | 'all_attachments' | 'all_subtasks' | 'attach_to_task';
 export type SlackExportMode = 'current' | 'all_files' | 'thread';
 export type JiraExportMode = 'current' | 'all_attachments';
 export type TeamsExportMode = 'current' | 'summary';

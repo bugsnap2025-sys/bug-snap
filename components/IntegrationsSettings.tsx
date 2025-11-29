@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { IntegrationConfig } from '../types';
 import { useToast } from './ToastProvider';
-import { Save, Lock, List, CheckCircle2, AlertCircle, Slack, Hash, Layers, Sparkles } from 'lucide-react';
+import { Save, Lock, List, CheckCircle2, AlertCircle, Slack, Hash, Layers } from 'lucide-react';
 import { extractListId } from '../services/clickUpService';
 import { extractChannelId } from '../services/slackService';
 
@@ -192,91 +192,6 @@ export const IntegrationsSettings: React.FC = () => {
                   </p>
               )}
               <p className="text-xs text-slate-500 mt-1">Right-click a channel sidebar &gt; Copy Link. Paste to extract ID.</p>
-            </div>
-          </div>
-        </section>
-
-        {/* Figma Config */}
-        <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 border-l-4 border-l-purple-600">
-          <div className="flex items-center gap-3 mb-6">
-             <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                <Sparkles size={20} />
-             </div>
-             <div>
-                <h2 className="text-xl font-bold text-slate-900">Figma Design Review</h2>
-                <p className="text-sm text-slate-500">Compare your screenshots with Figma designs using AI.</p>
-             </div>
-          </div>
-          
-          <div className="grid gap-5">
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Figma Personal Access Token</label>
-              <div className="relative">
-                <input 
-                  type="password" 
-                  className="w-full border-slate-300 rounded-lg shadow-sm focus:border-purple-600 focus:ring-purple-600 p-3 border pr-10 font-mono text-sm"
-                  placeholder="figd_..."
-                  value={config.figmaToken || ''}
-                  onChange={(e) => handleChange('figmaToken', e.target.value)}
-                />
-                <Lock className="absolute right-3 top-3.5 text-slate-400" size={16} />
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Get your token from <a href="https://www.figma.com/developers/api#access-tokens" target="_blank" rel="noreferrer" className="text-purple-600 hover:underline">Figma Settings → Account → Personal Access Tokens</a>
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Figma File Key or URL</label>
-              <div className="relative">
-                <input 
-                  type="text" 
-                  className="w-full border-slate-300 rounded-lg shadow-sm focus:border-purple-600 focus:ring-purple-600 p-3 border text-sm"
-                  placeholder="abc123xyz456 or https://figma.com/file/abc123xyz456/..."
-                  value={config.figmaFileKey || ''}
-                  onChange={(e) => handleChange('figmaFileKey', e.target.value)}
-                />
-              </div>
-              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs font-semibold text-blue-900 mb-2">📋 How to find your File Key:</p>
-                <ol className="text-xs text-blue-800 space-y-1.5 list-decimal list-inside">
-                  <li>Open your Figma file in the browser</li>
-                  <li>Copy the URL from the address bar</li>
-                  <li>The URL can be:
-                    <ul className="list-disc list-inside ml-4 mt-1 space-y-1">
-                      <li><code className="bg-blue-100 px-1 rounded">figma.com/file/[FILE_KEY]/name</code></li>
-                      <li><code className="bg-blue-100 px-1 rounded">figma.com/design/[FILE_KEY]/name</code> (newer format)</li>
-                    </ul>
-                  </li>
-                  <li>The <strong>FILE_KEY</strong> is the code after <code className="bg-blue-100 px-1 rounded">/file/</code> or <code className="bg-blue-100 px-1 rounded">/design/</code></li>
-                  <li>You can paste the full URL (with query params) or just the key - both work!</li>
-                </ol>
-                <div className="mt-2 space-y-1">
-                  <p className="text-xs text-blue-700 font-semibold">Examples:</p>
-                  <p className="text-xs text-blue-700">
-                    • <code className="bg-blue-100 px-1 rounded">figma.com/file/ABC123xyz/Design</code> → Key: <code className="bg-blue-100 px-1 rounded">ABC123xyz</code>
-                  </p>
-                  <p className="text-xs text-blue-700">
-                    • <code className="bg-blue-100 px-1 rounded">figma.com/design/oCoSfAamXQJdyjlpQMErpx/App?node-id=...</code> → Key: <code className="bg-blue-100 px-1 rounded">oCoSfAamXQJdyjlpQMErpx</code>
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Figma Node ID (Optional)</label>
-              <div className="relative">
-                <input 
-                  type="text" 
-                  className="w-full border-slate-300 rounded-lg shadow-sm focus:border-purple-600 focus:ring-purple-600 p-3 border text-sm"
-                  placeholder="1:23"
-                  value={config.figmaNodeId || ''}
-                  onChange={(e) => handleChange('figmaNodeId', e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Specific frame/node to compare. Leave empty to select from all frames in the file.
-              </p>
             </div>
           </div>
         </section>

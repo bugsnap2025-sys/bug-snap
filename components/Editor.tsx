@@ -18,7 +18,6 @@ import { AsanaModal } from './AsanaModal';
 import { WebhookModal } from './WebhookModal';
 import { ZohoSprintsModal } from './ZohoSprintsModal';
 import { IntegrationModal } from './IntegrationModal';
-import { FigmaReviewer } from './FigmaReviewer';
 import { useToast } from './ToastProvider';
 import { jsPDF } from "jspdf";
 import { 
@@ -52,7 +51,6 @@ import {
   Share2,
   ChevronDown,
   Settings,
-  Sparkles,
   HardDrive
 } from 'lucide-react';
 
@@ -121,7 +119,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [createdTaskUrl, setCreatedTaskUrl] = useState<string | null>(null);
   const [createdTaskPlatform, setCreatedTaskPlatform] = useState<string>('ClickUp');
-  const [isFigmaReviewerOpen, setIsFigmaReviewerOpen] = useState(false);
   
   // Integration Modal State
   const [integrationModalSource, setIntegrationModalSource] = useState<IntegrationSource | null>(null);
@@ -152,11 +149,10 @@ export const Editor: React.FC<EditorProps> = ({
               if (config.clickUpToken) connected.push('ClickUp');
               if (config.jiraToken) connected.push('Jira');
               if (config.slackToken) connected.push('Slack');
-              if (config.teamsToken) connected.push('Teams');
+              if (config.teamsWebhookUrl) connected.push('Teams'); // Updated check
               if (config.asanaToken) connected.push('Asana');
               if (config.webhookUrl) connected.push('Webhook');
               if (config.zohoSprintsToken) connected.push('ZohoSprints');
-              // Note: Figma is not added to connectedSources as it's a review tool, not an export tool
               if (config.googleDriveToken) connected.push('GoogleDrive');
               setConnectedSources(connected);
           }
@@ -194,7 +190,6 @@ export const Editor: React.FC<EditorProps> = ({
 
 
   // --- Canvas Logic ---
-  // (Omitted for brevity, unchanged from original Editor.tsx except where needed)
   const getCanvasPoint = (e: React.MouseEvent): Point => {
     if (!containerRef.current) return { x: 0, y: 0 };
     const rect = containerRef.current.getBoundingClientRect();
@@ -658,7 +653,283 @@ export const Editor: React.FC<EditorProps> = ({
     });
   };
 
-  // Export Handlers...
+  // ... export handlers ...
+
+  // Refactored function with robust fallback support
+  const handleExportToClickUpWithFallback = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string, parentId?: string) => {
+    setExportError(null);
+    const savedConfig = localStorage.getItem('bugsnap_config');
+    if (!savedConfig) { setExportError("Please configure ClickUp."); return; }
+    const config: IntegrationConfig = JSON.parse(savedConfig);
+    if (!config.clickUpToken) { setExportError("Missing ClickUp Token."); return; }
+    
+    setIsExporting(true);
+    
+    const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+    const ext = '.jpg';
+    
+    let mainTaskId: string | null = null;
+    let mainTaskUrl: string | null = null;
+
+    try {
+        if (mode === 'current') {
+            const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
+            mainTaskId = task.id;
+            mainTaskUrl = task.url;
+            
+            const blob = await optimizeImage(activeSlide);
+            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
+            
+            setCreatedTaskUrl(task.url);
+        }
+        else if (mode === 'attach_to_task') {
+            if (!parentId) throw new Error("No parent task selected.");
+            const task = await createClickUpTask({ 
+                listId, 
+                token: config.clickUpToken, 
+                title: customTitle || activeSlide.name || 'Bug Report', 
+                description: customDescription || generateTaskDescription(activeSlide),
+                parentId: parentId 
+            });
+            mainTaskId = task.id;
+            mainTaskUrl = task.url;
+            
+            const blob = await optimizeImage(activeSlide);
+            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
+            
+            setCreatedTaskUrl(task.url);
+        }
+        else if (mode === 'all_attachments') {
+            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
+            mainTaskId = masterTask.id;
+            mainTaskUrl = masterTask.url;
+            
+            setCreatedTaskUrl(masterTask.url); // Optimistic or sequential setting
+            
+            for (const slide of slides) {
+                const blob = await optimizeImage(slide);
+                await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
+            }
+        }
+        else if (mode === 'all_subtasks') {
+             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
+             mainTaskId = masterTask.id;
+             mainTaskUrl = masterTask.url;
+             
+             setCreatedTaskUrl(masterTask.url);
+
+             for (const slide of slides) {
+                const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
+                try {
+                    const blob = await optimizeImage(slide);
+                    await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
+                } catch (subErr: any) {
+                    if (subErr.message && subErr.message.includes("Storage Full") && config.googleDriveToken) {
+                         const blob = await optimizeImage(slide);
+                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
+                         await updateClickUpTask(subTask.id, config.clickUpToken, { description: generateTaskDescription(slide) + `\n\n**[Backup] Image:** [Open in Drive](${driveFile.webViewLink})` });
+                    } else {
+                        throw subErr;
+                    }
+                }
+            }
+        }
+
+        setIsClickUpModalOpen(false);
+        setCreatedTaskPlatform('ClickUp');
+
+    } catch (error: any) {
+        if (error.message && error.message.includes("Storage Full") && config.googleDriveToken && mainTaskId) {
+             addToast("ClickUp storage full. Using Google Drive backup...", "info");
+             try {
+                 // Fallback for main task attachment failure
+                 if (mode === 'current' || mode === 'attach_to_task') {
+                     const blob = await optimizeImage(activeSlide);
+                     const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${activeSlide.name}.jpg`);
+                     const newDesc = (customDescription || generateTaskDescription(activeSlide)) + `\n\n---\n**Attachment (Drive Backup):** [View Image](${driveFile.webViewLink})`;
+                     await updateClickUpTask(mainTaskId, config.clickUpToken, { description: newDesc });
+                 } else if (mode === 'all_attachments') {
+                     let linksMd = "\n\n### Drive Backup Attachments\n";
+                     for (const slide of slides) {
+                         const blob = await optimizeImage(slide);
+                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
+                         linksMd += `- [${slide.name}](${driveFile.webViewLink})\n`;
+                     }
+                     const baseDesc = customDescription || generateMasterDescription(slides);
+                     await updateClickUpTask(mainTaskId, config.clickUpToken, { description: baseDesc + linksMd });
+                 }
+                 
+                 setIsClickUpModalOpen(false);
+                 setCreatedTaskPlatform('ClickUp (Drive Backup)');
+                 
+                 // CRITICAL: Ensure the Success Modal shows by setting the URL
+                 // Use saved mainTaskUrl or construct it from ID
+                 if (mainTaskUrl) {
+                     setCreatedTaskUrl(mainTaskUrl);
+                 } else {
+                     setCreatedTaskUrl(`https://app.clickup.com/t/${mainTaskId}`);
+                 }
+                 
+             } catch (driveErr) {
+                 setExportError(`ClickUp Full & Drive Upload Failed: ${driveErr}`);
+             }
+        } else if (error.message && error.message.includes("Storage Full") && !config.googleDriveToken) {
+             setExportError("ClickUp Storage Full. Please connect Google Drive in Integrations to use as backup.");
+        } else {
+             setExportError(error instanceof Error ? error.message : "Unknown Error");
+        }
+    } finally {
+        setIsExporting(false);
+    }
+  };
+
+  const handleExportToJira = async (mode: JiraExportMode, projectId: string, issueTypeId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) { setExportError("Please configure Jira in Integrations first."); return; }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.jiraToken || !config.jiraUrl || !config.jiraEmail) { setExportError("Missing Jira configuration."); return; }
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          const creds = { domain: config.jiraUrl, email: config.jiraEmail, token: config.jiraToken };
+          let issueKey = ""; let issueUrl = "";
+          if (mode === 'current') {
+              const issue = await createJiraIssue(creds, { projectId, issueTypeId, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
+              issueKey = issue.key; issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
+              const blob = await optimizeImage(activeSlide);
+              await uploadJiraAttachment(creds, issue.id, blob, `report${ext}`);
+          } else if (mode === 'all_attachments') {
+              const issue = await createJiraIssue(creds, { projectId, issueTypeId, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
+              issueKey = issue.key; issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadJiraAttachment(creds, issue.id, blob, `${slide.name}${ext}`);
+              }
+          }
+          setIsJiraModalOpen(false);
+          setCreatedTaskUrl(issueUrl);
+          setCreatedTaskPlatform('Jira');
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
+  };
+
+  // Updated Teams Handler
+  const handleExportToTeams = async (mode: TeamsExportMode) => {
+    setExportError(null);
+    const savedConfig = localStorage.getItem('bugsnap_config');
+    if (!savedConfig) { setExportError("Please configure Teams in Integrations first."); return; }
+    const config: IntegrationConfig = JSON.parse(savedConfig);
+    if (!config.teamsWebhookUrl) { setExportError("Missing Teams Webhook URL."); return; }
+    
+    setIsExporting(true);
+    try {
+        if (mode === 'current') { 
+            await postTeamsMessage(config.teamsWebhookUrl, activeSlide); 
+        }
+        else if (mode === 'summary') { 
+            await postTeamsMessage(config.teamsWebhookUrl, undefined, generateMasterDescription(slides)); 
+        }
+        setIsTeamsModalOpen(false);
+        addToast("Shared to Teams Successfully!", 'success');
+    } catch (error) { 
+        console.error(error); 
+        const msg = error instanceof Error ? error.message : 'Unknown error'; 
+        setExportError(msg); 
+        if (!msg.includes('corsdemo')) addToast(msg, 'error'); 
+    } finally { 
+        setIsExporting(false); 
+    }
+  };
+
+  const handleExportToAsana = async (mode: AsanaExportMode, workspaceId: string, projectId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) { setExportError("Please configure Asana in Integrations first."); return; }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.asanaToken) { setExportError("Missing Asana Personal Access Token."); return; }
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          let taskUrl = "";
+          if (mode === 'current') {
+              const task = await createAsanaTask(config.asanaToken, workspaceId, projectId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
+              taskUrl = task.permalink_url;
+              const blob = await optimizeImage(activeSlide);
+              await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `report${ext}`);
+          } else if (mode === 'all_attachments') {
+              const task = await createAsanaTask(config.asanaToken, workspaceId, projectId, customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
+              taskUrl = task.permalink_url;
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `${slide.name}${ext}`);
+              }
+          }
+          setIsAsanaModalOpen(false);
+          setCreatedTaskUrl(taskUrl);
+          setCreatedTaskPlatform('Asana');
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
+  };
+
+  const handleExportToZohoSprints = async (mode: ZohoSprintsExportMode, teamId: string, projectId: string, itemTypeId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) { setExportError("Please configure Zoho Sprints in Integrations first."); return; }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.zohoSprintsToken || !config.zohoSprintsDC) { setExportError("Missing Zoho Sprints configuration."); return; }
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          
+          if (mode === 'current') {
+              const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
+              const blob = await optimizeImage(activeSlide);
+              await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `report${ext}`);
+          } else if (mode === 'all_attachments') {
+              const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || `Bug Report - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `${slide.name}${ext}`);
+              }
+          }
+          
+          setIsZohoSprintsModalOpen(false);
+          setCreatedTaskUrl("https://sprints.zoho.com"); // Generic fallback
+          setCreatedTaskPlatform('Zoho Sprints');
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
+  };
+
+  const handleExportToSlack = async (mode: SlackExportMode) => {
+    setExportError(null);
+    const savedConfig = localStorage.getItem('bugsnap_config');
+    if (!savedConfig) { setExportError("Please configure Slack in Integrations first."); return; }
+    const config: IntegrationConfig = JSON.parse(savedConfig);
+    if (!config.slackToken || !config.slackChannel) { setExportError("Missing Slack Bot Token or Channel ID in Integrations."); return; }
+    setIsExporting(true);
+    try {
+        if (mode === 'current') {
+            const blob = await generateCompositeImage(activeSlide);
+            await uploadSlackFile(config.slackToken, config.slackChannel, blob, 'bug_report.png', activeSlide.name || 'Bug Report');
+            await postSlackMessage(config.slackToken, config.slackChannel, generateSlideMessage(activeSlide));
+        } else if (mode === 'all_files') {
+            for (const slide of slides) {
+                const blob = await generateCompositeImage(slide);
+                await uploadSlackFile(config.slackToken, config.slackChannel, blob, `${slide.name}.png`, slide.name);
+            }
+            await postSlackMessage(config.slackToken, config.slackChannel, `Uploaded ${slides.length} bug reports.`);
+        } else if (mode === 'thread') {
+            const threadTs = await postSlackMessage(config.slackToken, config.slackChannel, `*Bug Report Session - ${new Date().toLocaleString()}*\nContains ${slides.length} issues.`);
+            for (const slide of slides) {
+                const blob = await generateCompositeImage(slide);
+                await uploadSlackFile(config.slackToken, config.slackChannel, blob, `${slide.name}.png`, slide.name, threadTs);
+            }
+        }
+        setIsSlackModalOpen(false);
+        addToast("Shared to Slack Successfully!", 'success');
+    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
+  };
 
   const handleExportToWebhook = async (mode: WebhookExportMode, customTitle: string, customDescription: string) => {
       setExportError(null);
@@ -769,380 +1040,6 @@ export const Editor: React.FC<EditorProps> = ({
     } catch (err) { addToast("Failed to copy image. Try using Chrome.", "error"); } finally { setIsProcessing(false); }
   };
 
-  const handleExportToClickUp = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
-    setExportError(null);
-    const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) { setExportError("Please configure ClickUp in Integrations first."); return; }
-    const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.clickUpToken) { setExportError("Missing ClickUp Token in Integrations."); return; }
-    
-    setIsExporting(true);
-    
-    try {
-        let taskUrl = "";
-        let tasksCreated = [];
-        const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
-        const ext = '.jpg';
-
-        // 1. Create Task(s) First
-        if (mode === 'current') {
-            const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
-            taskUrl = task.url;
-            try {
-                const blob = await optimizeImage(activeSlide);
-                await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
-            } catch (attachError) {
-                // Task created successfully, but attachment failed - log warning but don't fail the export
-                console.warn('Task created but attachment upload failed:', attachError);
-                const errorMsg = attachError instanceof Error ? attachError.message : 'Attachment upload failed';
-                addToast(`Task created successfully, but attachment failed: ${errorMsg}`, 'info');
-            }
-            tasksCreated.push(task);
-            
-            const blob = await optimizeImage(activeSlide);
-            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
-        } else if (mode === 'all_attachments') {
-            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
-            taskUrl = masterTask.url;
-            tasksCreated.push(masterTask);
-
-            for (const slide of slides) {
-                try {
-                    const blob = await optimizeImage(slide);
-                    await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
-                } catch (attachError) {
-                    console.warn(`Failed to upload attachment for slide ${slide.name}:`, attachError);
-                    // Continue with next slide
-                }
-            }
-        } else if (mode === 'all_subtasks') {
-            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
-            taskUrl = masterTask.url;
-            tasksCreated.push(masterTask);
-
-            for (const slide of slides) {
-                const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
-                try {
-                    const blob = await optimizeImage(slide);
-                    await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
-                } catch (attachError) {
-                    console.warn(`Failed to upload attachment for subtask ${slide.name}:`, attachError);
-                    // Continue with next slide
-                }
-            }
-        }
-        
-        setIsClickUpModalOpen(false);
-        setCreatedTaskUrl(taskUrl);
-        setCreatedTaskPlatform('ClickUp');
-
-    } catch (error: any) {
-        // Fallback Logic for Storage Full
-        if (error.message && error.message.includes("Storage Full") && config.googleDriveToken) {
-             addToast("ClickUp storage full. Uploading to Drive...", "info");
-             try {
-                 const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
-                 
-                 // Determine which slide(s) failed. Simplified: assume we just need to link all intended images.
-                 // For 'current', upload activeSlide.
-                 // For 'all', loop.
-                 
-                 let links = [];
-                 
-                 if (mode === 'current') {
-                     const blob = await optimizeImage(activeSlide);
-                     const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${activeSlide.name}.jpg`);
-                     links.push({ name: activeSlide.name, link: driveFile.webViewLink });
-                 } else {
-                     for (const slide of slides) {
-                         const blob = await optimizeImage(slide);
-                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
-                         links.push({ name: slide.name, link: driveFile.webViewLink });
-                     }
-                 }
-                 
-                 // Update Task Descriptions
-                 // We need the IDs of created tasks. Since task creation succeeded before upload failed, 
-                 // we need to track them. But `createClickUpTask` returns the task object.
-                 // If the error occurred during upload, we assume task creation was successful (as per API flow).
-                 // However, inside the `try` block above, if `uploadClickUpAttachment` throws, `tasksCreated` might be lost if not scoped out.
-                 // But here `tasksCreated` won't be accessible in `catch`.
-                 // Wait, `tasksCreated` is local.
-                 // We need to restructure to handle this better or just accept we can't update easily without refactor.
-                 
-                 // REFACTOR: We need task IDs. 
-                 // Since the catch block doesn't have access to variables defined in try block, 
-                 // we will assume the user sees the error toast and we can't automate the fix fully without refactoring state.
-                 // ALTERNATIVE: Throw a custom error object containing the Task ID that succeeded.
-                 
-                 // But for this quick implementation, let's just inform the user.
-                 // "Storage Full. Task created but upload failed. Please connect Drive or upgrade."
-                 
-                 // Wait, the requirement is "we will upload... and just move the link".
-                 // I must restructure the try block to persist the taskId so I can update it.
-                 
-                 // Since I can't easily access `task.id` from the `catch` block unless I lift it,
-                 // I'll just set the error message to prompt them to use Drive from the start?
-                 // No, automatic fallback is better.
-                 
-                 // Let's throw a custom error with the task ID from `uploadClickUpAttachment`? No, that function takes ID as arg.
-                 // The caller `handleExportToClickUp` has the ID.
-                 
-                 // I will rewrite the try/catch structure slightly inside `handleExportToClickUp` above (nested try/catch).
-                 
-             } catch (driveErr) {
-                 console.error("Drive Fallback Failed", driveErr);
-                 setExportError(`ClickUp Storage Full. Drive Backup Failed: ${driveErr}`);
-             }
-        } else {
-             console.error(error); 
-             const msg = error instanceof Error ? error.message : 'Unknown error'; 
-             setExportError(msg); 
-             if (!msg.includes('corsdemo')) addToast(msg, 'error');
-        }
-    } finally { 
-        setIsExporting(false); 
-    }
-  };
-
-  // Refactored function with robust fallback support
-  const handleExportToClickUpWithFallback = async (mode: ClickUpExportMode, listId: string, customTitle: string, customDescription: string) => {
-    setExportError(null);
-    const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) { setExportError("Please configure ClickUp."); return; }
-    const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.clickUpToken) { setExportError("Missing ClickUp Token."); return; }
-    
-    setIsExporting(true);
-    
-    const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
-    const ext = '.jpg';
-    
-    let mainTaskId: string | null = null;
-
-    try {
-        if (mode === 'current') {
-            const task = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
-            mainTaskId = task.id;
-            const blob = await optimizeImage(activeSlide);
-            await uploadClickUpAttachment(task.id, config.clickUpToken, blob, `report${ext}`);
-            setCreatedTaskUrl(task.url);
-        } 
-        else if (mode === 'all_attachments') {
-            const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
-            mainTaskId = masterTask.id;
-            setCreatedTaskUrl(masterTask.url);
-            
-            for (const slide of slides) {
-                const blob = await optimizeImage(slide);
-                await uploadClickUpAttachment(masterTask.id, config.clickUpToken, blob, `${slide.name}${ext}`);
-            }
-        }
-        else if (mode === 'all_subtasks') {
-             // Subtasks logic is harder to fallback for individual failures, assuming main task for now.
-             const masterTask = await createClickUpTask({ listId, token: config.clickUpToken, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
-             mainTaskId = masterTask.id;
-             setCreatedTaskUrl(masterTask.url);
-
-             for (const slide of slides) {
-                const subTask = await createClickUpTask({ listId, token: config.clickUpToken, title: slide.name || 'Slide Issue', description: generateTaskDescription(slide), parentId: masterTask.id });
-                // We fallback individually?
-                try {
-                    const blob = await optimizeImage(slide);
-                    await uploadClickUpAttachment(subTask.id, config.clickUpToken, blob, `report${ext}`);
-                } catch (subErr: any) {
-                    if (subErr.message && subErr.message.includes("Storage Full") && config.googleDriveToken) {
-                         const blob = await optimizeImage(slide);
-                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
-                         await updateClickUpTask(subTask.id, config.clickUpToken, { description: generateTaskDescription(slide) + `\n\n**[Backup] Image:** [Open in Drive](${driveFile.webViewLink})` });
-                    } else {
-                        throw subErr;
-                    }
-                }
-            }
-        }
-
-        setIsClickUpModalOpen(false);
-        setCreatedTaskPlatform('ClickUp');
-
-    } catch (error: any) {
-        if (error.message && error.message.includes("Storage Full") && config.googleDriveToken && mainTaskId) {
-             addToast("ClickUp storage full. Using Google Drive backup...", "info");
-             try {
-                 // Fallback for main task attachment failure
-                 if (mode === 'current') {
-                     const blob = await optimizeImage(activeSlide);
-                     const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${activeSlide.name}.jpg`);
-                     const newDesc = (customDescription || generateTaskDescription(activeSlide)) + `\n\n---\n**Attachment (Drive Backup):** [View Image](${driveFile.webViewLink})`;
-                     await updateClickUpTask(mainTaskId, config.clickUpToken, { description: newDesc });
-                 } else if (mode === 'all_attachments') {
-                     let linksMd = "\n\n### Drive Backup Attachments\n";
-                     for (const slide of slides) {
-                         const blob = await optimizeImage(slide);
-                         const driveFile = await uploadToDrive(config.googleDriveToken, blob, `BugSnap_${slide.name}.jpg`);
-                         linksMd += `- [${slide.name}](${driveFile.webViewLink})\n`;
-                     }
-                     // Append to description
-                     // Note: we don't have original description easily unless we stored it. 
-                     // But we can just append. ClickUp update replaces description? 
-                     // Wait, updateClickUpTask replaces usually.
-                     // So we should re-construct it.
-                     const baseDesc = customDescription || generateMasterDescription(slides);
-                     await updateClickUpTask(mainTaskId, config.clickUpToken, { description: baseDesc + linksMd });
-                 }
-                 
-                 setIsClickUpModalOpen(false);
-                 setCreatedTaskPlatform('ClickUp (Drive Backup)');
-                 // URL is already set if task creation succeeded
-                 
-             } catch (driveErr) {
-                 setExportError(`ClickUp Full & Drive Upload Failed: ${driveErr}`);
-             }
-        } else if (error.message && error.message.includes("Storage Full") && !config.googleDriveToken) {
-             setExportError("ClickUp Storage Full. Please connect Google Drive in Integrations to use as backup.");
-        } else {
-             setExportError(error instanceof Error ? error.message : "Unknown Error");
-        }
-    } finally {
-        setIsExporting(false);
-    }
-  };
-
-  const handleExportToJira = async (mode: JiraExportMode, projectId: string, issueTypeId: string, customTitle: string, customDescription: string) => {
-      setExportError(null);
-      const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) { setExportError("Please configure Jira in Integrations first."); return; }
-      const config: IntegrationConfig = JSON.parse(savedConfig);
-      if (!config.jiraToken || !config.jiraUrl || !config.jiraEmail) { setExportError("Missing Jira configuration."); return; }
-      setIsExporting(true);
-      try {
-          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
-          const ext = '.jpg';
-          const creds = { domain: config.jiraUrl, email: config.jiraEmail, token: config.jiraToken };
-          let issueKey = ""; let issueUrl = "";
-          if (mode === 'current') {
-              const issue = await createJiraIssue(creds, { projectId, issueTypeId, title: customTitle || activeSlide.name || 'Bug Report', description: customDescription || generateTaskDescription(activeSlide) });
-              issueKey = issue.key; issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
-              const blob = await optimizeImage(activeSlide);
-              await uploadJiraAttachment(creds, issue.id, blob, `report${ext}`);
-          } else if (mode === 'all_attachments') {
-              const issue = await createJiraIssue(creds, { projectId, issueTypeId, title: customTitle || `Bug Report - ${new Date().toLocaleString()}`, description: customDescription || generateMasterDescription(slides) });
-              issueKey = issue.key; issueUrl = `${config.jiraUrl.startsWith('http') ? config.jiraUrl : 'https://' + config.jiraUrl}/browse/${issueKey}`;
-              for (const slide of slides) {
-                  const blob = await optimizeImage(slide);
-                  await uploadJiraAttachment(creds, issue.id, blob, `${slide.name}${ext}`);
-              }
-          }
-          setIsJiraModalOpen(false);
-          setCreatedTaskUrl(issueUrl);
-          setCreatedTaskPlatform('Jira');
-      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
-  };
-
-  const handleExportToTeams = async (mode: TeamsExportMode) => {
-    setExportError(null);
-    const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) { setExportError("Please configure Teams in Integrations first."); return; }
-    const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.teamsToken || !config.teamsTeamId || !config.teamsChannelId) { setExportError("Missing Teams configuration in Integrations."); return; }
-    setIsExporting(true);
-    try {
-        if (mode === 'current') { await postTeamsMessage({ token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId }, activeSlide); }
-        else if (mode === 'summary') { await postTeamsMessage({ token: config.teamsToken, teamId: config.teamsTeamId, channelId: config.teamsChannelId }, undefined, generateMasterDescription(slides)); }
-        setIsTeamsModalOpen(false);
-        addToast("Shared to Teams Successfully!", 'success');
-    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
-  };
-
-  const handleExportToAsana = async (mode: AsanaExportMode, workspaceId: string, projectId: string, customTitle: string, customDescription: string) => {
-      setExportError(null);
-      const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) { setExportError("Please configure Asana in Integrations first."); return; }
-      const config: IntegrationConfig = JSON.parse(savedConfig);
-      if (!config.asanaToken) { setExportError("Missing Asana Personal Access Token."); return; }
-      setIsExporting(true);
-      try {
-          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
-          const ext = '.jpg';
-          let taskUrl = "";
-          if (mode === 'current') {
-              const task = await createAsanaTask(config.asanaToken, workspaceId, projectId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
-              taskUrl = task.permalink_url;
-              const blob = await optimizeImage(activeSlide);
-              await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `report${ext}`);
-          } else if (mode === 'all_attachments') {
-              const task = await createAsanaTask(config.asanaToken, workspaceId, projectId, customTitle || `Bug Report Batch - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
-              taskUrl = task.permalink_url;
-              for (const slide of slides) {
-                  const blob = await optimizeImage(slide);
-                  await uploadAsanaAttachment(config.asanaToken, task.gid, blob, `${slide.name}${ext}`);
-              }
-          }
-          setIsAsanaModalOpen(false);
-          setCreatedTaskUrl(taskUrl);
-          setCreatedTaskPlatform('Asana');
-      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
-  };
-
-  const handleExportToZohoSprints = async (mode: ZohoSprintsExportMode, teamId: string, projectId: string, itemTypeId: string, customTitle: string, customDescription: string) => {
-      setExportError(null);
-      const savedConfig = localStorage.getItem('bugsnap_config');
-      if (!savedConfig) { setExportError("Please configure Zoho Sprints in Integrations first."); return; }
-      const config: IntegrationConfig = JSON.parse(savedConfig);
-      if (!config.zohoSprintsToken || !config.zohoSprintsDC) { setExportError("Missing Zoho Sprints configuration."); return; }
-      setIsExporting(true);
-      try {
-          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
-          const ext = '.jpg';
-          
-          if (mode === 'current') {
-              const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
-              const blob = await optimizeImage(activeSlide);
-              await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `report${ext}`);
-          } else if (mode === 'all_attachments') {
-              const item = await createZohoSprintsItem(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, itemTypeId, customTitle || `Bug Report - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
-              for (const slide of slides) {
-                  const blob = await optimizeImage(slide);
-                  await uploadZohoSprintsAttachment(config.zohoSprintsDC, config.zohoSprintsToken, teamId, projectId, item.itemNo, blob, `${slide.name}${ext}`);
-              }
-          }
-          
-          setIsZohoSprintsModalOpen(false);
-          setCreatedTaskUrl("https://sprints.zoho.com"); // Generic fallback
-          setCreatedTaskPlatform('Zoho Sprints');
-      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
-  };
-
-  const handleExportToSlack = async (mode: SlackExportMode) => {
-    setExportError(null);
-    const savedConfig = localStorage.getItem('bugsnap_config');
-    if (!savedConfig) { setExportError("Please configure Slack in Integrations first."); return; }
-    const config: IntegrationConfig = JSON.parse(savedConfig);
-    if (!config.slackToken || !config.slackChannel) { setExportError("Missing Slack Bot Token or Channel ID in Integrations."); return; }
-    setIsExporting(true);
-    try {
-        if (mode === 'current') {
-            const blob = await generateCompositeImage(activeSlide);
-            await uploadSlackFile(config.slackToken, config.slackChannel, blob, 'bug_report.png', activeSlide.name || 'Bug Report');
-            await postSlackMessage(config.slackToken, config.slackChannel, generateSlideMessage(activeSlide));
-        } else if (mode === 'all_files') {
-            for (const slide of slides) {
-                const blob = await generateCompositeImage(slide);
-                await uploadSlackFile(config.slackToken, config.slackChannel, blob, `${slide.name}.png`, slide.name);
-            }
-            await postSlackMessage(config.slackToken, config.slackChannel, `Uploaded ${slides.length} bug reports.`);
-        } else if (mode === 'thread') {
-            const threadTs = await postSlackMessage(config.slackToken, config.slackChannel, `*Bug Report Session - ${new Date().toLocaleString()}*\nContains ${slides.length} issues.`);
-            for (const slide of slides) {
-                const blob = await generateCompositeImage(slide);
-                await uploadSlackFile(config.slackToken, config.slackChannel, blob, `${slide.name}.png`, slide.name, threadTs);
-            }
-        }
-        setIsSlackModalOpen(false);
-        addToast("Shared to Slack Successfully!", 'success');
-    } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
-  };
-
   const activeIndex = slides.findIndex(s => s.id === activeSlideId);
 
   const CloseConfirmation = () => {
@@ -1230,24 +1127,8 @@ export const Editor: React.FC<EditorProps> = ({
           case 'Asana': return <CheckCircle2 size={16} />;
           case 'Webhook': return <Webhook size={16} />;
           case 'ZohoSprints': return <Database size={16} />;
-          case 'Figma': return <Sparkles size={16} />;
           case 'GoogleDrive': return <HardDrive size={16} />;
           default: return <Share2 size={16} />;
-      }
-  };
-
-  const getSourceColor = (source: IntegrationSource) => {
-      switch(source) {
-          case 'ClickUp': return 'bg-[#7B68EE] hover:bg-[#6c5ce7]'; // ClickUp Purple
-          case 'Jira': return 'bg-[#0052CC] hover:bg-[#0747A6]';
-          case 'Slack': return 'bg-[#4A154B] hover:bg-[#3f1240]';
-          case 'Teams': return 'bg-[#5059C9] hover:bg-[#434aa8]';
-          case 'Asana': return 'bg-[#F06A6A] hover:bg-[#e05a5a]';
-          case 'Webhook': return 'bg-pink-600 hover:bg-pink-700';
-          case 'ZohoSprints': return 'bg-teal-500 hover:bg-teal-600';
-          case 'Figma': return 'bg-purple-600 hover:bg-purple-700';
-          case 'GoogleDrive': return 'bg-[#34A853] hover:bg-[#2e9148]';
-          default: return 'bg-blue-600 hover:bg-blue-700';
       }
   };
 
@@ -1343,18 +1224,6 @@ export const Editor: React.FC<EditorProps> = ({
         onConfigure={() => { setIsZohoSprintsModalOpen(false); setIntegrationModalSource('ZohoSprints'); }}
       />
 
-      <FigmaReviewer
-        slide={activeSlide}
-        isOpen={isFigmaReviewerOpen}
-        onClose={() => setIsFigmaReviewerOpen(false)}
-        onOpenIntegrations={() => {
-          setIsFigmaReviewerOpen(false);
-          // This will be handled by the parent App component
-          // For now, we'll use a custom event
-          window.dispatchEvent(new CustomEvent('navigate-to-integrations'));
-        }}
-      />
-
       {/* Toolbar */}
       <div className="h-14 border-b border-slate-200 dark:border-[#272727] flex items-center justify-between px-4 bg-white dark:bg-[#0f0f0f] shrink-0 z-20 transition-colors">
         <div className="flex items-center h-full">
@@ -1424,17 +1293,6 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-           <button 
-             onClick={() => setIsFigmaReviewerOpen(true)}
-             className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 px-3 py-1.5 rounded border border-purple-200 dark:border-purple-800 text-xs font-semibold transition-colors"
-             title="Compare with Figma Design"
-           >
-             <Sparkles size={14} />
-             Figma Review
-           </button>
-           
-           <div className="w-px h-5 bg-slate-200 dark:bg-[#272727] mx-1"></div>
-           
            <button 
              onClick={handleGeneratePDF}
              disabled={isProcessing}

@@ -30,7 +30,7 @@ export const TeamsModal: React.FC<TeamsModalProps> = ({
           const globalConfig = localStorage.getItem('bugsnap_config');
           if (globalConfig) {
               const parsed: IntegrationConfig = JSON.parse(globalConfig);
-              if (!parsed.teamsToken || !parsed.teamsTeamId || !parsed.teamsChannelId) {
+              if (!parsed.teamsWebhookUrl) {
                   setIsConfigured(false);
               } else {
                   setIsConfigured(true);
@@ -54,7 +54,7 @@ export const TeamsModal: React.FC<TeamsModalProps> = ({
                     </div>
                     <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Connect Microsoft Teams</h2>
                     <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6">
-                        Connect your Teams account using Graph API to share formatted bug reports directly to channels.
+                        Connect using an Incoming Webhook URL to share formatted bug reports directly to your channel.
                     </p>
                     <button 
                         onClick={onConfigure}
@@ -101,7 +101,7 @@ export const TeamsModal: React.FC<TeamsModalProps> = ({
                         <span>Proxy Activation Required</span>
                     </div>
                     <p className="text-red-700 dark:text-red-400">
-                        The browser security proxy requires one-time verification to reach Microsoft Graph.
+                        The browser security proxy requires one-time verification to reach the Webhook URL.
                     </p>
                     <div className="mt-2 space-y-2">
                         <a 
@@ -146,7 +146,7 @@ export const TeamsModal: React.FC<TeamsModalProps> = ({
                     </div>
                     <div>
                         <h4 className="font-bold text-slate-800 dark:text-white text-sm">Current Slide</h4>
-                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Sends a rich HTML card with the bug details for the active slide.</p>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Sends an Adaptive Card with the bug details for the active slide.</p>
                     </div>
                     </div>
 
@@ -160,7 +160,7 @@ export const TeamsModal: React.FC<TeamsModalProps> = ({
                     </div>
                     <div>
                         <h4 className="font-bold text-slate-800 dark:text-white text-sm">Full Report Summary</h4>
-                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Sends a summary of all {slides.length} slides and their issues.</p>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Sends a summary card of all {slides.length} slides and their issues.</p>
                     </div>
                     </div>
                 </div>
@@ -168,7 +168,7 @@ export const TeamsModal: React.FC<TeamsModalProps> = ({
                 <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/10 rounded text-xs text-blue-600 dark:text-blue-300 border border-blue-100 dark:border-blue-800">
                     <p className="flex items-start gap-1.5">
                     <Zap size={14} className="shrink-0 mt-0.5" />
-                    <span>Note: Due to API limits, images are not attached directly. The report contains formatted text descriptions.</span>
+                    <span>Note: Images are not attached to Webhook messages. The report contains detailed text descriptions.</span>
                     </p>
                 </div>
             </>

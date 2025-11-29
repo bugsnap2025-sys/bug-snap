@@ -216,16 +216,24 @@ export const createClickUpTask = async ({ listId, token, title, description, par
 
     if (!response.ok) {
       const text = await response.text();
+      let errMessage = text;
       try {
           const json = JSON.parse(text);
-          const errMessage = json.err || json.ECODE || text;
-          throw new Error(`ClickUp API Error: ${response.status} - ${errMessage}`);
+          errMessage = json.err || json.ECODE || text;
       } catch (e) {
-          throw new Error(`ClickUp API Error: ${response.status} - ${text}`);
+          // Use raw text if json parsing fails
       }
+      throw new Error(`ClickUp API Error: ${response.status} - ${errMessage}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    
+    // Ensure URL is present (fallback construction)
+    if (!data.url && data.id) {
+        data.url = `https://app.clickup.com/t/${data.id}`;
+    }
+    
+    return data;
   } catch (error) {
     console.error("ClickUp Task Creation Failed:", error);
     throw error;
@@ -329,8 +337,8 @@ export const generateMasterDescription = (slides: Slide[]): string => {
   return desc;
 };
 
-export const fetchClickUpTasks = async (listId: string, token: string): Promise<ReportedIssue[]> => {
-    const url = `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&subtasks=true`;
+export const fetchClickUpTasks = async (listId: string, token: string, includeSubtasks: boolean = true): Promise<ReportedIssue[]> => {
+    const url = `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&subtasks=${includeSubtasks}`;
     
     try {
         const response = await fetchWithProxy(url, {
