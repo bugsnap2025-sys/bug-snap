@@ -19,8 +19,9 @@ export interface FigmaImageResponse {
 
 /**
  * Adds a timeout to a fetch request using AbortController
+ * Increased timeout to 30 seconds to allow for multiple proxy attempts
  */
-const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number = 15000): Promise<Response> => {
+const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number = 30000): Promise<Response> => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
@@ -36,7 +37,7 @@ const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: nu
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError' || controller.signal.aborted) {
-      throw new Error('Request timeout: The Figma API did not respond in time. Please check your connection and try again.');
+      throw new Error('Request timeout: The Figma API did not respond in time. Please check your connection and try again. Make sure your backend proxy server is running (npm run server) or check your internet connection.');
     }
     throw error;
   }
@@ -44,10 +45,14 @@ const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: nu
 
 /**
  * Validates Figma token and file access
+ * Uses query parameters to minimize response size and avoid "Request too large" errors
  */
 export const validateFigmaConnection = async (fileKey: string, token: string): Promise<boolean> => {
   try {
-    const url = `https://api.figma.com/v1/files/${fileKey}`;
+    // Use depth=1 query parameter to reduce response size significantly
+    // This limits the response to top-level nodes only, preventing "Request too large" errors
+    // For validation, we only need to verify the file exists and is accessible
+    const url = `https://api.figma.com/v1/files/${fileKey}?depth=1`;
     
     // Use timeout wrapper to prevent hanging
     const response = await fetchWithTimeout(url, {
@@ -55,7 +60,7 @@ export const validateFigmaConnection = async (fileKey: string, token: string): P
       headers: {
         'X-Figma-Token': token
       }
-    }, 15000); // 15 second timeout
+    }, 30000); // 30 second timeout to allow for proxy fallbacks
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error');
@@ -64,6 +69,9 @@ export const validateFigmaConnection = async (fileKey: string, token: string): P
       }
       if (response.status === 404) {
         throw new Error('Figma API returned 404: File not found. Please check your File Key.');
+      }
+      if (response.status === 400 && errorText.includes('too large')) {
+        throw new Error('Figma file is too large. Please try using a Node ID to filter to a specific frame, or contact support if this persists.');
       }
       throw new Error(`Figma API error (${response.status}): ${errorText}`);
     }
@@ -117,9 +125,12 @@ export const extractFigmaFileKey = (urlOrKey: string): string | null => {
 
 /**
  * Fetches a Figma file's structure
+ * Uses depth parameter to limit response size and avoid "Request too large" errors
  */
-export const getFigmaFile = async (fileKey: string, token: string): Promise<FigmaNode> => {
-  const url = `https://api.figma.com/v1/files/${fileKey}`;
+export const getFigmaFile = async (fileKey: string, token: string, maxDepth: number = 10): Promise<FigmaNode> => {
+  // Use depth parameter to limit the tree depth, reducing response size
+  // Default depth of 10 should be enough to find most frames while keeping response manageable
+  const url = `https://api.figma.com/v1/files/${fileKey}?depth=${maxDepth}`;
   
   const response = await fetchWithProxy(url, {
     method: 'GET',
@@ -130,6 +141,9 @@ export const getFigmaFile = async (fileKey: string, token: string): Promise<Figm
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (response.status === 400 && errorText.includes('too large')) {
+      throw new Error('Figma file is too large. Please use a Node ID to filter to a specific frame in your Figma integration settings.');
+    }
     throw new Error(`Figma API Error: ${response.status} - ${errorText}`);
   }
 
@@ -139,22 +153,78 @@ export const getFigmaFile = async (fileKey: string, token: string): Promise<Figm
 
 /**
  * Gets all frame nodes from a Figma file (screens/pages)
+ * Handles large files by trying progressively smaller depths
  */
 export const getFigmaFrames = async (fileKey: string, token: string): Promise<FigmaNode[]> => {
-  const document = await getFigmaFile(fileKey, token);
-  const frames: FigmaNode[] = [];
+  // Try with different depths if the file is too large
+  const depths = [10, 5, 3, 1];
+  let lastError: Error | null = null;
+  let lastFrames: FigmaNode[] = [];
 
-  const traverse = (node: FigmaNode) => {
-    if (node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE') {
-      frames.push(node);
-    }
-    if (node.children) {
-      node.children.forEach(traverse);
-    }
-  };
+  for (const depth of depths) {
+    try {
+      const document = await getFigmaFile(fileKey, token, depth);
+      const frames: FigmaNode[] = [];
 
-  traverse(document);
-  return frames;
+      const traverse = (node: FigmaNode) => {
+        try {
+          if (node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE') {
+            frames.push(node);
+          }
+          if (node.children && Array.isArray(node.children)) {
+            node.children.forEach(traverse);
+          }
+        } catch (e) {
+          // Skip nodes that cause traversal errors
+          console.warn('Error traversing node:', e);
+        }
+      };
+
+      traverse(document);
+      lastFrames = frames;
+      
+      // If we found frames, return them immediately
+      if (frames.length > 0) {
+        return frames;
+      }
+      
+      // If no frames found at this depth, try smaller depth
+      if (depth > 1) {
+        continue;
+      }
+      
+      // If we're at depth 1 and no frames, return empty array (file might not have frames)
+      return frames;
+    } catch (error: any) {
+      lastError = error;
+      // If it's a "too large" error and we have more depths to try, continue
+      if (error.message?.includes('too large') && depth > 1) {
+        continue;
+      }
+      // If it's a network/connection error, re-throw immediately
+      if (error.message?.includes('timeout') || error.message?.includes('Failed to fetch') || error.message?.includes('Network')) {
+        throw error;
+      }
+      // For other errors, try next depth
+      if (depth > 1) {
+        continue;
+      }
+      // If we're at the last depth, throw the error
+      throw error;
+    }
+  }
+
+  // If we exhausted all depths but got some frames, return them
+  if (lastFrames.length > 0) {
+    return lastFrames;
+  }
+
+  // If we exhausted all depths, throw the last error or return empty array
+  if (lastError) {
+    throw lastError;
+  }
+  
+  return [];
 };
 
 /**

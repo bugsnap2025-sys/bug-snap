@@ -53,6 +53,9 @@ const FALLBACK_PROXY_PROVIDERS: ProxyProvider[] = [
   }
 ];
 
+// Alias for consistency
+const PROXY_PROVIDERS = FALLBACK_PROXY_PROVIDERS;
+
 /**
  * Tries direct API call first (if CORS allows it)
  */
@@ -78,6 +81,7 @@ const fetchDirect = async (url: string, options: RequestInit = {}): Promise<Resp
 
 /**
  * Fetches using our backend proxy (primary method)
+ * Uses a shorter timeout to fail fast if backend is not running
  */
 const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Promise<Response> => {
   const isFormData = options.body instanceof FormData;
@@ -144,22 +148,62 @@ const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Pr
     };
   }
 
-  const response = await fetch(proxyUrl, {
-    ...proxyRequest,
-    signal: options.signal
-  });
-  
-  // If backend proxy is working, return the response
-  if (response.ok || response.status < 500) {
+  // Add a shorter timeout for backend proxy check (5 seconds)
+  // This prevents hanging when backend server is not running
+  const backendTimeoutMs = 5000;
+  const backendController = new AbortController();
+  const backendTimeoutId = setTimeout(() => {
+    backendController.abort();
+  }, backendTimeoutMs);
+
+  // If there's an existing signal, check if it's already aborted
+  if (options.signal?.aborted) {
+    clearTimeout(backendTimeoutId);
+    const abortError = new Error('Request was aborted');
+    abortError.name = 'AbortError';
+    throw abortError;
+  }
+
+  // Listen to the original signal and abort backend controller if it aborts
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => {
+      clearTimeout(backendTimeoutId);
+      backendController.abort();
+    });
+  }
+
+  try {
+    const response = await fetch(proxyUrl, {
+      ...proxyRequest,
+      signal: backendController.signal
+    });
+    
+    clearTimeout(backendTimeoutId);
+    
+    // If backend proxy is working, return the response
+    if (response.ok || response.status < 500) {
+      return response;
+    }
+
+    // If backend is down (5xx), throw to trigger fallback
+    if (response.status >= 500) {
+      throw new Error('Backend proxy unavailable');
+    }
+
     return response;
+  } catch (error: any) {
+    clearTimeout(backendTimeoutId);
+    // If backend timeout occurred, throw a specific error to trigger fallback
+    if (error.name === 'AbortError' && backendController.signal.aborted) {
+      // Check if it was the original signal that aborted
+      if (options.signal?.aborted) {
+        throw error; // Re-throw the original abort error
+      }
+      throw new Error('Backend proxy unavailable');
+    }
+    // Re-throw other errors
+    throw error;
   }
-
-  // If backend is down (5xx), throw to trigger fallback
-  if (response.status >= 500) {
-    throw new Error('Backend proxy unavailable');
-  }
-
-  return response;
 };
 
 /**

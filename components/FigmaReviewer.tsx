@@ -62,16 +62,19 @@ export const FigmaReviewer: React.FC<FigmaReviewerProps> = ({ slide, isOpen, onC
   // Load frames when modal opens
   useEffect(() => {
     if (isOpen) {
-      loadFigmaFrames();
       const config = getFigmaConfig();
       if (config?.nodeId) {
         setSelectedFrameId(config.nodeId);
+      } else {
+        setSelectedFrameId(null);
       }
+      loadFigmaFrames();
     } else {
       setResult(null);
       setError(null);
       setFigmaFrames([]);
       setFigmaImageUrl(null);
+      setSelectedFrameId(null);
     }
   }, [isOpen]);
 
@@ -79,19 +82,26 @@ export const FigmaReviewer: React.FC<FigmaReviewerProps> = ({ slide, isOpen, onC
     const config = getFigmaConfig();
     if (!config) {
       setError('Please configure Figma in Integrations settings first.');
+      setIsLoadingFrames(false);
       return;
     }
 
     setIsLoadingFrames(true);
+    setError(null);
     try {
       const frames = await getFigmaFrames(config.fileKey, config.token);
+      console.log('Loaded Figma frames:', frames.length);
       setFigmaFrames(frames);
       if (frames.length > 0 && !selectedFrameId) {
         setSelectedFrameId(frames[0].id);
+      } else if (frames.length === 0) {
+        setError('No frames found in this Figma file. Make sure the file contains frames, components, or instances.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load Figma frames');
-      addToast('Failed to load Figma frames', 'error');
+      console.error('Error loading Figma frames:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load Figma frames';
+      setError(errorMessage);
+      addToast(errorMessage, 'error');
     } finally {
       setIsLoadingFrames(false);
     }
