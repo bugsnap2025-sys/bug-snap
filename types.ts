@@ -57,12 +57,24 @@ export interface IntegrationConfig {
   
   asanaToken?: string; // Asana Personal Access Token
   asanaWorkspaceId?: string; // Default Workspace ID
+  
+  // Trello Configuration
+  trelloApiKey?: string;
+  trelloToken?: string;
+  
   webhookUrl?: string; // Custom Webhook URL
   zohoToken?: string; // Zoho Projects OAuth Token
   zohoDC?: string; // Zoho Data Center (eu, com, etc.)
   zohoSprintsToken?: string; // Zoho Sprints OAuth Token
   zohoSprintsDC?: string; // Zoho Sprints Data Center
   googleDriveToken?: string; // Google Drive Access Token for Backup
+
+  // Scheduled Reporting
+  scheduleEnabled?: boolean;
+  scheduleTime?: string; // "09:00" (24h format)
+  scheduleDays?: number[]; // [1, 2, 3, 4, 5] (Mon-Fri, 0=Sun)
+  schedulePlatform?: 'Slack' | 'Teams';
+  lastScheduleRun?: string; // ISO Date string of last successful run
 }
 
 export enum AppView {
@@ -78,7 +90,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Trello' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive';
 
 export interface ReportedIssue {
   id: string;
@@ -103,6 +115,7 @@ export type SlackExportMode = 'current' | 'all_files' | 'thread';
 export type JiraExportMode = 'current' | 'all_attachments';
 export type TeamsExportMode = 'current' | 'summary';
 export type AsanaExportMode = 'current' | 'all_attachments';
+export type TrelloExportMode = 'current' | 'all_attachments';
 export type WebhookExportMode = 'current' | 'all_attachments';
 export type ZohoExportMode = 'current' | 'all_attachments';
 export type ZohoSprintsExportMode = 'current' | 'all_attachments';
@@ -143,6 +156,18 @@ export interface AsanaWorkspace {
 
 export interface AsanaProject {
   gid: string;
+  name: string;
+}
+
+// Trello Types
+export interface TrelloBoard {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export interface TrelloList {
+  id: string;
   name: string;
 }
 

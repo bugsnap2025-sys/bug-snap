@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 
 // Helper to safely get the API Key in both Dev and Prod (Browser) environments
@@ -161,4 +162,80 @@ export const generateAIReportMetadata = async (
         description: annotations.map((a: any, i: number) => `${i + 1}. ${a.comment}`).join('\n') 
     };
   }
+};
+
+export interface DetectedIssue {
+    coordinates: number[]; // [ymin, xmin, ymax, xmax] 0-1000
+    suggestion: string;
+    explanation: string;
+}
+
+export const scanImageForIssues = async (base64Image: string): Promise<DetectedIssue[]> => {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      console.warn("Gemini API Key missing.");
+      return [];
+    }
+
+    try {
+        const ai = new GoogleGenAI({ apiKey });
+        // Using pro-image model or flash-lite-latest which supports bounding boxes well
+        const modelId = 'gemini-2.5-flash'; 
+        
+        // Strip data:image prefix if present for pure base64
+        const pureBase64 = base64Image.split(',')[1] || base64Image;
+
+        const prompt = `
+            Analyze this image for grammatical errors, spelling mistakes, typos, and awkward phrasing in the visible text.
+            
+            Return a JSON object containing a list of issues found.
+            For each issue, strictly provide:
+            1. 'coordinates': A bounding box [ymin, xmin, ymax, xmax] normalized to a 1000x1000 scale.
+            2. 'original': The text containing the error.
+            3. 'suggestion': The corrected text.
+            4. 'explanation': A very brief reason (e.g., "Spelling error", "Grammar fix").
+
+            If no text issues are found, return an empty list.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: {
+                parts: [
+                    { inlineData: { mimeType: 'image/png', data: pureBase64 } },
+                    { text: prompt }
+                ]
+            },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        issues: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    coordinates: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                                    original: { type: Type.STRING },
+                                    suggestion: { type: Type.STRING },
+                                    explanation: { type: Type.STRING }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        const text = response.text;
+        if (!text) return [];
+        
+        const json = JSON.parse(text);
+        return json.issues || [];
+
+    } catch (error) {
+        console.error("AI Visual Scan failed:", error);
+        return [];
+    }
 };

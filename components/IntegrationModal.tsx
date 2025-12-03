@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, HardDrive } from 'lucide-react';
+import { X, AlertCircle, Save, Layers, Slack, CreditCard, Lock, Hash, Trash2, Loader2, ExternalLink, Globe, Mail, Users, Key, CheckCircle2, Link as LinkIcon, Webhook, HardDrive, Info, Trello } from 'lucide-react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { extractChannelId } from '../services/slackService';
 import { validateClickUpToken } from '../services/clickUpService';
 import { validateJiraCredentials } from '../services/jiraService';
 import { validateTeamsWebhookUrl } from '../services/teamsService';
 import { validateAsanaToken } from '../services/asanaService';
+import { validateTrelloCredentials } from '../services/trelloService';
 import { validateWebhookUrl } from '../services/webhookService';
 import { requestDriveToken } from '../services/googleDriveService';
 
@@ -47,6 +48,31 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     setIsCorsDemoError(false);
   };
 
+  const handleJiraUrlBlur = () => {
+      let url = formData.jiraUrl || '';
+      if (!url) return;
+      
+      // Auto-fix protocol
+      if (!url.match(/^https?:\/\//)) {
+          url = 'https://' + url;
+      }
+
+      // Smart Fix: If user entered "xyz.atlassian" without ".net", append it.
+      if (url.includes('.atlassian') && !url.includes('.atlassian.net')) {
+          url = url.replace(/\.atlassian(\/|$)/, '.atlassian.net$1');
+      }
+      
+      try {
+          const urlObj = new URL(url);
+          const cleanBase = `${urlObj.protocol}//${urlObj.hostname}`;
+          if (cleanBase !== formData.jiraUrl) {
+              handleChange('jiraUrl', cleanBase);
+          }
+      } catch (e) {
+          // If invalid URL, leave as is for validation to catch
+      }
+  };
+
   const handleSave = async () => {
     let newConfig = { ...formData };
     
@@ -59,7 +85,13 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
     if (newConfig.jiraToken) newConfig.jiraToken = newConfig.jiraToken.trim();
     if (newConfig.teamsWebhookUrl) newConfig.teamsWebhookUrl = newConfig.teamsWebhookUrl.trim();
     if (newConfig.asanaToken) newConfig.asanaToken = newConfig.asanaToken.trim();
+    if (newConfig.trelloApiKey) newConfig.trelloApiKey = newConfig.trelloApiKey.trim();
+    if (newConfig.trelloToken) newConfig.trelloToken = newConfig.trelloToken.trim();
     if (newConfig.webhookUrl) newConfig.webhookUrl = newConfig.webhookUrl.trim();
+
+    if (source === 'Jira' && newConfig.jiraUrl && newConfig.jiraUrl.includes('.atlassian') && !newConfig.jiraUrl.includes('.atlassian.net')) {
+         newConfig.jiraUrl = newConfig.jiraUrl.replace('.atlassian', '.atlassian.net');
+    }
 
     setIsValidating(true);
     setError(null);
@@ -108,6 +140,13 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             }
             const isValid = await validateAsanaToken(newConfig.asanaToken);
             if (!isValid) throw new Error("Asana Authentication Failed.");
+        }
+        else if (source === 'Trello') {
+            if (!newConfig.trelloApiKey || !newConfig.trelloToken) {
+                throw new Error("API Key and Token are required.");
+            }
+            const isValid = await validateTrelloCredentials(newConfig.trelloApiKey, newConfig.trelloToken);
+            if (!isValid) throw new Error("Trello Authentication Failed.");
         }
         else if (source === 'Webhook') {
             if (!newConfig.webhookUrl) {
@@ -165,12 +204,15 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
           newConfig.jiraUrl = undefined;
       } else if (source === 'Teams') {
           newConfig.teamsWebhookUrl = undefined;
-          newConfig.teamsToken = undefined; // cleanup legacy
+          newConfig.teamsToken = undefined;
           newConfig.teamsTeamId = undefined;
           newConfig.teamsChannelId = undefined;
       } else if (source === 'Asana') {
           newConfig.asanaToken = undefined;
           newConfig.asanaWorkspaceId = undefined;
+      } else if (source === 'Trello') {
+          newConfig.trelloApiKey = undefined;
+          newConfig.trelloToken = undefined;
       } else if (source === 'Webhook') {
           newConfig.webhookUrl = undefined;
       } else if (source === 'GoogleDrive') {
@@ -180,6 +222,12 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
       onSave(newConfig as IntegrationConfig);
       onClose();
   };
+
+  const getTrelloTokenUrl = () => {
+      const apiKey = formData.trelloApiKey;
+      if (!apiKey || apiKey.length < 10) return null;
+      return `https://trello.com/1/authorize?expiration=never&name=BugSnap&scope=read,write&response_type=token&key=${apiKey}`;
+  }
 
   const renderContent = () => {
     switch(source) {
@@ -198,6 +246,55 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
                             />
                             <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-2">
+                            Generate a token in <a href="https://app.clickup.com/settings/apps" target="_blank" rel="noreferrer" className="text-[#7B68EE] hover:text-[#6c5ce7] underline font-medium">ClickUp Settings &gt; Apps</a>
+                        </p>
+                    </div>
+                </div>
+            );
+        case 'Trello':
+            return (
+                <div className="space-y-5">
+                    <div>
+                        <div className="flex justify-between items-center mb-1">
+                            <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300">API Key</label>
+                            <a href="https://trello.com/app-key" target="_blank" rel="noreferrer" className="text-xs text-[#0079BF] hover:underline font-bold flex items-center gap-1">
+                                Get API Key <ExternalLink size={10} />
+                            </a>
+                        </div>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0079BF] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="Paste API Key"
+                                value={formData.trelloApiKey || ''}
+                                onChange={(e) => handleChange('trelloApiKey', e.target.value)}
+                            />
+                            <Key className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                    </div>
+                    <div>
+                        <div className="flex justify-between items-center mb-1">
+                            <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300">Token</label>
+                            {formData.trelloApiKey && (
+                                <a href={getTrelloTokenUrl() || '#'} target="_blank" rel="noreferrer" className="text-xs text-[#0079BF] hover:underline font-bold flex items-center gap-1 animate-in fade-in">
+                                    Generate Token <ExternalLink size={10} />
+                                </a>
+                            )}
+                        </div>
+                        <div className="relative">
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0079BF] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                placeholder="Paste Token"
+                                value={formData.trelloToken || ''}
+                                onChange={(e) => handleChange('trelloToken', e.target.value)}
+                            />
+                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
+                        </div>
+                        {!formData.trelloApiKey && (
+                            <p className="text-xs text-slate-500 dark:text-zinc-500 mt-1">Enter API Key first to generate a Token link.</p>
+                        )}
                     </div>
                 </div>
             );
@@ -265,46 +362,64 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
             );
         case 'Jira':
             return (
-                 <div className="space-y-4">
+                 <div className="space-y-5">
+                     {/* URL Section */}
                      <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Jira Cloud URL</label>
+                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Jira Site URL</label>
                         <div className="relative">
                             <input 
                                 type="text" 
                                 className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="https://your-domain.atlassian.net"
+                                placeholder="https://your-company.atlassian.net"
                                 value={formData.jiraUrl || ''}
                                 onChange={(e) => handleChange('jiraUrl', e.target.value)}
+                                onBlur={handleJiraUrlBlur}
                             />
                             <Globe className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
                         </div>
+                        <p className="text-[11px] text-slate-500 dark:text-zinc-500 mt-1 flex items-center gap-1">
+                            <Info size={12}/> Paste any link from your Jira project, we'll extract the domain.
+                        </p>
                      </div>
-                     <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Email Address</label>
-                        <div className="relative">
-                            <input 
-                                type="email" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="user@company.com"
-                                value={formData.jiraEmail || ''}
-                                onChange={(e) => handleChange('jiraEmail', e.target.value)}
-                            />
-                            <Mail className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
-                     </div>
-                     <div>
-                        <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">API Token</label>
-                        <div className="relative">
-                            <input 
-                                type="password" 
-                                className="w-full bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
-                                placeholder="Paste API Token here"
-                                value={formData.jiraToken || ''}
-                                onChange={(e) => handleChange('jiraToken', e.target.value)}
-                            />
-                            <Lock className="absolute right-3 top-3.5 text-slate-400 dark:text-zinc-500" size={16} />
-                        </div>
-                        <p className="text-xs text-slate-500 mt-1">Create a token at <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" className="text-blue-500 underline">Atlassian Security Settings</a></p>
+
+                     {/* Credentials Section */}
+                     <div className="bg-slate-50 dark:bg-[#272727] p-4 rounded-xl border border-slate-100 dark:border-[#333] space-y-4">
+                         <div>
+                            <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300 mb-1">Email Address</label>
+                            <div className="relative">
+                                <input 
+                                    type="email" 
+                                    className="w-full bg-white dark:bg-[#1e1e1e] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-2.5 pl-3 pr-10 text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                    placeholder="user@company.com"
+                                    value={formData.jiraEmail || ''}
+                                    onChange={(e) => handleChange('jiraEmail', e.target.value)}
+                                />
+                                <Mail className="absolute right-3 top-2.5 text-slate-400 dark:text-zinc-500" size={16} />
+                            </div>
+                         </div>
+                         <div>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="block text-sm font-bold text-slate-700 dark:text-zinc-300">API Token</label>
+                                <a 
+                                    href="https://id.atlassian.com/manage-profile/security/api-tokens" 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="text-xs font-bold text-[#0052CC] hover:underline flex items-center gap-1"
+                                >
+                                    Generate Token <ExternalLink size={10} />
+                                </a>
+                            </div>
+                            <div className="relative">
+                                <input 
+                                    type="password" 
+                                    className="w-full bg-white dark:bg-[#1e1e1e] border border-slate-200 dark:border-[#3f3f3f] rounded-lg shadow-sm focus:ring-2 focus:ring-[#0052CC] focus:border-transparent p-2.5 pl-3 pr-10 font-mono text-sm text-slate-900 dark:text-white outline-none transition-colors placeholder-slate-400"
+                                    placeholder="Paste API Token here"
+                                    value={formData.jiraToken || ''}
+                                    onChange={(e) => handleChange('jiraToken', e.target.value)}
+                                />
+                                <Key className="absolute right-3 top-2.5 text-slate-400 dark:text-zinc-500" size={16} />
+                            </div>
+                         </div>
                      </div>
                  </div>
             );
@@ -387,6 +502,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira': return '#0052CC';
         case 'Teams': return '#5059C9';
         case 'Asana': return '#F06A6A';
+        case 'Trello': return '#0079BF';
         case 'Webhook': return '#db2777';
         case 'GoogleDrive': return '#34A853';
         default: return '#3b82f6';
@@ -400,6 +516,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({
         case 'Jira': return <CreditCard size={20} />;
         case 'Teams': return <Users size={20} />;
         case 'Asana': return <CheckCircle2 size={20} />;
+        case 'Trello': return <Trello size={20} />;
         case 'Webhook': return <Webhook size={20} />;
         case 'GoogleDrive': return <HardDrive size={20} />;
         default: return null;

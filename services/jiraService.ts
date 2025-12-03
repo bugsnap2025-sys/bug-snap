@@ -65,7 +65,7 @@ export const getJiraProjects = async (domain: string, email: string, token: stri
         if (!response.ok) {
             const text = await response.text();
             if (text.includes('corsdemo')) throw new Error('corsdemo_required');
-            throw new Error(`Failed to fetch projects: ${response.status}`);
+            throw new Error(`Failed to fetch projects (${response.status}): ${text.substring(0, 100)}`);
         }
 
         const data = await response.json();
@@ -271,29 +271,12 @@ export const uploadJiraAttachment = async (
  * Fetch Jira Issues for Dashboard using JQL (Jira Query Language)
  */
 export const fetchJiraIssues = async (config: { domain: string, email: string, token: string }): Promise<ReportedIssue[]> => {
-    const baseUrl = config.domain.startsWith('http') ? config.domain : `https://${config.domain}`;
-    // Fetch last 50 issues created by current user (approximate via JQL)
-    const jql = 'order by created DESC';
-    const url = `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=50&fields=summary,status,priority,created,assignee,creator`;
-
-    try {
-        const response = await fetchWithProxy(url, {
-            headers: {
-                'Authorization': getAuthHeader(config.email, config.token),
-                'Accept': 'application/json',
-                'X-Atlassian-Token': 'no-check',
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-
-        if (!response.ok) {
-             const text = await response.text();
-             if (text.includes('corsdemo')) throw new Error('corsdemo_required');
-             throw new Error("Failed to fetch Jira issues");
-        }
-
-        const data = await response.json();
-        
+    let baseUrl = config.domain.startsWith('http') ? config.domain : `https://${config.domain}`;
+    baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash if present
+    
+    // Helper to map Jira response to ReportedIssue
+    const mapIssues = (data: any) => {
+        if (!data.issues) return [];
         return data.issues.map((i: any) => ({
             id: i.key,
             title: i.fields.summary,
@@ -305,9 +288,83 @@ export const fetchJiraIssues = async (config: { domain: string, email: string, t
             assignee: i.fields.assignee?.displayName,
             url: `${baseUrl}/browse/${i.key}`
         }));
+    };
+
+    // Shared Search Body
+    const searchBody = {
+        jql: 'order by created DESC',
+        maxResults: 50,
+        fields: ['summary', 'status', 'priority', 'created', 'assignee', 'creator']
+    };
+
+    // Strategy 1: POST v3 (Preferred)
+    try {
+        const url = `${baseUrl}/rest/api/3/search`;
+        const response = await fetchWithProxy(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': getAuthHeader(config.email, config.token),
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Atlassian-Token': 'no-check',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(searchBody)
+        });
+
+        if (response.ok) {
+            return mapIssues(await response.json());
+        }
+        
+        // If 404/410/403, proceed to fallback. Throw others.
+        if (response.status !== 403 && response.status !== 404 && response.status !== 410) {
+             const text = await response.text();
+             if (text.includes('corsdemo')) throw new Error('corsdemo_required');
+             throw new Error(`Jira API Error (${response.status}): ${text.substring(0, 100)}...`);
+        }
+        console.warn(`Jira POST v3 failed (${response.status}), trying fallback...`);
+
+    } catch (e: any) {
+        if (e.message === 'corsdemo_required') throw e;
+        console.warn("Jira POST v3 strategy failed:", e);
+    }
+
+    // Strategy 2: POST v2 (Fallback)
+    // IMPORTANT: We use POST here as well because GET /search is removed/deprecated (410 Gone).
+    // v2 POST endpoint is generally stable for older integrations or if v3 has strict content-type issues.
+    try {
+        const url = `${baseUrl}/rest/api/2/search`;
+        
+        const response = await fetchWithProxy(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': getAuthHeader(config.email, config.token),
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Atlassian-Token': 'no-check',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(searchBody)
+        });
+
+        if (!response.ok) {
+             const text = await response.text();
+             if (text.includes('corsdemo')) throw new Error('corsdemo_required');
+             
+             try {
+                 const json = JSON.parse(text);
+                 if (json.errorMessages && json.errorMessages.length > 0) {
+                     throw new Error(`Jira: ${json.errorMessages.join(', ')}`);
+                 }
+             } catch(e) {}
+
+             throw new Error(`Jira API Error (${response.status}): ${text.substring(0, 100)}...`);
+        }
+
+        return mapIssues(await response.json());
 
     } catch (error) {
-        console.error("Fetch Jira Issues Failed:", error);
+        console.error("Fetch Jira Issues Failed (All Strategies):", error);
         throw error;
     }
 };

@@ -1,11 +1,16 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import { User, AppView, Slide } from './types';
+import { User, AppView, Slide, IntegrationConfig, IntegrationSource, ReportedIssue } from './types';
 import { Editor } from './components/Editor';
 import { Dashboard } from './components/Dashboard';
 import { IntegrationsHub } from './components/IntegrationsHub';
 import { useToast } from './components/ToastProvider';
+import { fetchClickUpTasks, getAllClickUpLists } from './services/clickUpService';
+import { fetchJiraIssues } from './services/jiraService';
+import { postSlackMessage, generateDashboardSummary } from './services/slackService';
+import { postTeamsMessage } from './services/teamsService';
+import { saveSlidesToDB, loadSlidesFromDB } from './services/storageService';
 import { 
   LogOut, 
   Monitor,
@@ -183,25 +188,12 @@ const App: React.FC = () => {
     } catch (e) { return null; }
   });
 
-  // 2. Lazy Init Slides (Persistence Layer)
-  const [slides, setSlides] = useState<Slide[]>(() => {
-    try {
-      const saved = localStorage.getItem('bugsnap_slides');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
+  // 2. Slides State (Loaded from IndexedDB)
+  const [slides, setSlides] = useState<Slide[]>([]);
+  const [isSlidesLoaded, setIsSlidesLoaded] = useState(false);
 
   // 3. Lazy Init Active Slide
-  const [activeSlideId, setActiveSlideId] = useState<string | null>(() => {
-    try {
-      const saved = localStorage.getItem('bugsnap_slides');
-      if (saved) {
-        const parsed: Slide[] = JSON.parse(saved);
-        return parsed.length > 0 ? parsed[0].id : null;
-      }
-    } catch (e) { return null; }
-    return null;
-  });
+  const [activeSlideId, setActiveSlideId] = useState<string | null>(null);
 
   // 4. Lazy Init View
   const [view, setView] = useState<AppView>(() => {
@@ -224,7 +216,6 @@ const App: React.FC = () => {
     return false;
   });
 
-  const [isDragging, setIsDragging] = useState(false);
   const [origin, setOrigin] = useState('');
   const [copied, setCopied] = useState(false);
   const [isInIframe, setIsInIframe] = useState(false);
@@ -262,18 +253,173 @@ const App: React.FC = () => {
 
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
 
-  // --- Persistence Effect ---
+  // --- Persistence Effect (IndexedDB) ---
+  
+  // Load on mount
   useEffect(() => {
-    localStorage.setItem('bugsnap_slides', JSON.stringify(slides));
+      const initSlides = async () => {
+          try {
+              const loadedSlides = await loadSlidesFromDB();
+              setSlides(loadedSlides);
+              if (loadedSlides.length > 0 && !activeSlideId) {
+                  setActiveSlideId(loadedSlides[0].id);
+              }
+          } catch (e) {
+              console.error("Failed to load slides", e);
+          } finally {
+              setIsSlidesLoaded(true);
+          }
+      };
+      
+      initSlides();
+  }, []);
+
+  // Save on change
+  useEffect(() => {
+    if (isSlidesLoaded) {
+        saveSlidesToDB(slides);
+    }
+    
     // Update PIP window if open
     if (pipRootRef.current && pipWindowRef.current) {
         renderPipContent();
     }
-  }, [slides, isFloatingSnapping]); // Re-render PIP when snapping state changes
+  }, [slides, isSlidesLoaded, isFloatingSnapping]); 
 
   useEffect(() => {
     setIsInIframe(window.self !== window.top);
   }, []);
+
+  // --- Background Scheduler ---
+  useEffect(() => {
+    const checkSchedule = async () => {
+        try {
+            const savedConfig = localStorage.getItem('bugsnap_config');
+            if (!savedConfig) return;
+            const config: IntegrationConfig = JSON.parse(savedConfig);
+
+            if (!config.scheduleEnabled || !config.scheduleTime || !config.scheduleDays) return;
+
+            const now = new Date();
+            const currentDay = now.getDay(); // 0-6
+            const [hours, minutes] = config.scheduleTime.split(':').map(Number);
+            const scheduledMinutes = hours * 60 + minutes;
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+            // Check if today is a scheduled day
+            if (!config.scheduleDays.includes(currentDay)) return;
+
+            // Catch-up Logic: 
+            // If current time is PAST scheduled time, check if we already ran it today.
+            // If not, run it now (Catch-up for missed window when tab was closed).
+            if (currentMinutes < scheduledMinutes) return; // Too early
+
+            // Check if already ran today
+            if (config.lastScheduleRun) {
+                const lastRun = new Date(config.lastScheduleRun);
+                if (lastRun.getDate() === now.getDate() && lastRun.getMonth() === now.getMonth() && lastRun.getFullYear() === now.getFullYear()) {
+                    return; // Already ran today
+                }
+            }
+
+            // --- Execute Report ---
+            const isLate = (currentMinutes - scheduledMinutes) > 30;
+            const msg = isLate ? "Sending missed scheduled report..." : "Generating scheduled report...";
+            addToast(msg, 'info');
+            
+            // 1. Fetch Data
+            let issues: ReportedIssue[] = [];
+            let sourceAttempted = false;
+
+            if (config.clickUpToken) {
+                let targetListId = config.clickUpListId;
+                
+                // If no List ID is saved, try to find one automatically
+                if (!targetListId) {
+                    try {
+                        const lists = await getAllClickUpLists(config.clickUpToken);
+                        if (lists.length > 0) {
+                            targetListId = lists[0].id;
+                            // Persist this discovered list so we don't have to fetch it every time
+                            config.clickUpListId = targetListId;
+                            config.clickUpListName = lists[0].name;
+                            localStorage.setItem('bugsnap_config', JSON.stringify(config));
+                        }
+                    } catch(e) {
+                        console.error("Auto-discovery of ClickUp list failed during schedule", e);
+                    }
+                }
+
+                if (targetListId) {
+                    sourceAttempted = true;
+                    issues = await fetchClickUpTasks(targetListId, config.clickUpToken);
+                }
+            }
+            
+            if (!sourceAttempted && config.jiraUrl && config.jiraToken && config.jiraEmail) {
+                sourceAttempted = true;
+                issues = await fetchJiraIssues({ domain: config.jiraUrl, email: config.jiraEmail, token: config.jiraToken });
+            }
+
+            if (!sourceAttempted) {
+                // If no source is configured, we can't generate a report.
+                console.warn("Scheduled report skipped: No ClickUp or Jira configured.");
+                return;
+            }
+
+            // Note: If source IS configured but issues.length is 0, we SHOULD proceed.
+            // 0 issues is a valid report (e.g. "0 Pending Issues").
+
+            // 2. Calculate Metrics
+            const total = issues.length;
+            const resolvedStatuses = ['complete', 'closed', 'resolved', 'done', 'completed'];
+            const resolvedCount = issues.filter(i => resolvedStatuses.includes(i.status.toLowerCase())).length;
+            const openCount = total - resolvedCount;
+            const resolutionRate = total > 0 ? Math.round((resolvedCount / total) * 100) : 0;
+            const priorityDist = { Urgent: 0, High: 0, Normal: 0, Low: 0 };
+            issues.forEach(i => { if (priorityDist[i.priority as keyof typeof priorityDist] !== undefined) priorityDist[i.priority as keyof typeof priorityDist]++; });
+            const priorityData = Object.keys(priorityDist).map(k => ({ name: k, count: priorityDist[k as keyof typeof priorityDist] }));
+            
+            const metrics = { total, openCount, resolvedCount, resolutionRate, priorityData };
+
+            // 3. Send Report
+            let reportSent = false;
+            if (config.schedulePlatform === 'Slack' && config.slackToken && config.slackChannel) {
+                const summary = generateDashboardSummary(metrics);
+                await postSlackMessage(config.slackToken, config.slackChannel, summary);
+                addToast("Scheduled report sent to Slack", 'success');
+                reportSent = true;
+            } else if (config.schedulePlatform === 'Teams' && config.teamsWebhookUrl) {
+                const priorityText = (priorityData || []).map((p: any) => `- **${p.name}**: ${p.count}`).join('\n');
+                const summary = `**BugSnap Daily Report**\n\n` +
+                       `✅ **Resolved:** ${resolvedCount}\n\n` +
+                       `⏳ **Pending:** ${openCount}\n\n` +
+                       `**Priority:**\n${priorityText || 'No active issues'}`;
+                await postTeamsMessage(config.teamsWebhookUrl, undefined, summary);
+                addToast("Scheduled report sent to Teams", 'success');
+                reportSent = true;
+            }
+
+            // 4. Update Last Run
+            if (reportSent) {
+                config.lastScheduleRun = new Date().toISOString();
+                localStorage.setItem('bugsnap_config', JSON.stringify(config));
+            } else {
+                console.warn("Schedule triggered but no platform configured or sending failed.");
+            }
+
+        } catch (e) {
+            console.error("Scheduled report failed", e);
+        }
+    };
+
+    // Run check every 60 seconds
+    const intervalId = setInterval(checkSchedule, 60000);
+    // Initial check on mount
+    checkSchedule();
+    
+    return () => clearInterval(intervalId);
+  }, [addToast]);
 
   // Click outside listener for menu
   useEffect(() => {
@@ -303,8 +449,8 @@ const App: React.FC = () => {
     setView(AppView.LOGIN);
     setSlides([]); // Clear slides from state
     setActiveSlideId(null);
+    saveSlidesToDB([]); // Clear DB
     localStorage.removeItem('bugsnap_user');
-    localStorage.removeItem('bugsnap_slides'); // Clear slides from storage on logout
     addToast('Logged out successfully', 'info');
   };
 
@@ -318,8 +464,7 @@ const App: React.FC = () => {
       handleLoginSuccess(guestUser);
   };
 
-  // --- Google Auth Implementation ---
-
+  // --- Google Auth --- (Code same as before)
   const decodeJwt = (token: string) => {
     try {
         const base64Url = token.split('.')[1];
@@ -418,47 +563,65 @@ const App: React.FC = () => {
   };
 
 
-  // --- Capture Logic ---
+  // --- Capture Logic (Updated for Base64 Persistence) ---
   const handleFileUpload = (files: FileList | null) => {
     if (!files) return;
     
     let firstNewSlideId: string | null = null;
     let count = 0;
+    const fileArray = Array.from(files);
 
-    Array.from(files).forEach((file, index) => {
+    // Process files sequentially to maintain order and update state correctly
+    // We use FileReader to get Base64
+    fileArray.forEach((file, index) => {
       const isVideo = file.type.startsWith('video/');
       const isImage = file.type.startsWith('image/');
 
       if (isImage || isVideo) {
-        const url = URL.createObjectURL(file);
-        const newSlide: Slide = {
-          id: crypto.randomUUID(),
-          type: isVideo ? 'video' : 'image',
-          src: url,
-          name: file.name,
-          annotations: [],
-          createdAt: Date.now() + index
+        const reader = new FileReader();
+        
+        reader.onload = (e) => {
+            const base64Data = e.target?.result as string;
+            
+            setSlides(prev => {
+                const newSlide: Slide = {
+                  id: crypto.randomUUID(),
+                  type: isVideo ? 'video' : 'image',
+                  src: base64Data, // Persistable Base64
+                  name: file.name,
+                  annotations: [],
+                  createdAt: Date.now() + index
+                };
+                
+                // If it's the first one added in this batch, switch to it
+                if (!activeSlideId && prev.length === 0) {
+                    setActiveSlideId(newSlide.id);
+                    setView(AppView.EDITOR);
+                } else if (!firstNewSlideId) {
+                    // Just mark it for switching if we want auto-switch logic
+                    firstNewSlideId = newSlide.id;
+                    // Auto-switch to the *first* new slide if user was on dashboard
+                    if (view === AppView.DASHBOARD) {
+                        setActiveSlideId(newSlide.id);
+                        setView(AppView.EDITOR);
+                    }
+                }
+                
+                return [...prev, newSlide];
+            });
         };
-        setSlides(prev => {
-            const updated = [...prev, newSlide];
-            return updated;
-        });
-        if (!firstNewSlideId) firstNewSlideId = newSlide.id;
+        
+        reader.readAsDataURL(file);
         count++;
       }
     });
 
     if (count > 0) {
-      addToast(`Added ${count} file${count > 1 ? 's' : ''}`, 'success');
-    }
-
-    if (firstNewSlideId) {
-      setActiveSlideId(firstNewSlideId);
-      setView(AppView.EDITOR);
+      addToast(`Processing ${count} file${count > 1 ? 's' : ''}...`, 'info');
     }
   };
 
-  // --- Video Recording Logic ---
+  // --- Video Recording Logic (Updated for Base64) ---
   const handleVideoRecord = async () => {
     try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ 
@@ -477,20 +640,28 @@ const App: React.FC = () => {
 
         mediaRecorder.onstop = () => {
             const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            const newSlide: Slide = {
-                id: crypto.randomUUID(),
-                type: 'video',
-                src: url,
-                name: `Recording ${new Date().toLocaleTimeString()}`,
-                annotations: [],
-                createdAt: Date.now()
+            
+            // Convert to Base64 for persistence
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+            reader.onloadend = () => {
+                const base64Data = reader.result as string;
+                
+                const newSlide: Slide = {
+                    id: crypto.randomUUID(),
+                    type: 'video',
+                    src: base64Data,
+                    name: `Recording ${new Date().toLocaleTimeString()}`,
+                    annotations: [],
+                    createdAt: Date.now()
+                };
+                
+                setSlides(prev => [...prev, newSlide]);
+                setActiveSlideId(newSlide.id);
+                setView(AppView.EDITOR);
+                setIsRecording(false);
+                setRecordingTime(0);
             };
-            setSlides(prev => [...prev, newSlide]);
-            setActiveSlideId(newSlide.id);
-            setView(AppView.EDITOR);
-            setIsRecording(false);
-            setRecordingTime(0);
             
             if (timerRef.current) clearInterval(timerRef.current);
             
@@ -501,9 +672,8 @@ const App: React.FC = () => {
 
         mediaRecorder.start();
         setIsRecording(true);
-        setView(AppView.EDITOR); // Go to editor to show overlay
+        setView(AppView.EDITOR); 
 
-        // Timer
         timerRef.current = window.setInterval(() => {
             setRecordingTime(prev => prev + 1);
         }, 1000);
@@ -519,8 +689,7 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Floating Capture Logic (PIP) ---
-
+  // --- Floating Capture Logic (Updated for Base64) ---
   const handleSnapFromStream = async (): Promise<boolean> => {
       try {
         setIsFloatingSnapping(true);
@@ -578,28 +747,23 @@ const App: React.FC = () => {
             // Draw current frame
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // Create blob async
-            await new Promise<void>((resolve) => {
-                canvas.toBlob(blob => {
-                    if (blob) {
-                        const url = URL.createObjectURL(blob);
-                        const newSlide: Slide = {
-                            id: crypto.randomUUID(),
-                            type: 'image',
-                            src: url,
-                            name: `Snap ${new Date().toLocaleTimeString()}`,
-                            annotations: [],
-                            createdAt: Date.now()
-                        };
-                        setSlides(prev => [...prev, newSlide]);
-                        // SWITCH TO EDITOR VIEW IMMEDIATELY
-                        setActiveSlideId(newSlide.id);
-                        setView(AppView.EDITOR);
-                        success = true;
-                    }
-                    resolve();
-                }, 'image/png');
-            });
+            // Convert to Base64 String (Data URL) - This is persistent!
+            const base64Data = canvas.toDataURL('image/png');
+            
+            const newSlide: Slide = {
+                id: crypto.randomUUID(),
+                type: 'image',
+                src: base64Data, // Persistable Base64
+                name: `Snap ${new Date().toLocaleTimeString()}`,
+                annotations: [],
+                createdAt: Date.now()
+            };
+            
+            setSlides(prev => [...prev, newSlide]);
+            // SWITCH TO EDITOR VIEW IMMEDIATELY
+            setActiveSlideId(newSlide.id);
+            setView(AppView.EDITOR);
+            success = true;
         }
         
         // Cleanup temp video but KEEP STREAM OPEN
@@ -713,6 +877,7 @@ const App: React.FC = () => {
 
   const handleCloseSession = () => {
       setSlides([]);
+      saveSlidesToDB([]); // Clear DB on session close
       setActiveSlideId(null);
       setView(AppView.DASHBOARD);
   };
@@ -899,7 +1064,7 @@ const App: React.FC = () => {
                        const newSlides = slides.filter(s => s.id !== id);
                        setSlides(newSlides);
                        if (newSlides.length === 0) {
-                           setActiveSlideId(null); // Keep in Editor view with empty state
+                           setActiveSlideId(null); 
                        } else if (activeSlideId === id) {
                            setActiveSlideId(newSlides[0].id);
                        }

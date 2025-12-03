@@ -1,12 +1,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource, JiraExportMode, TeamsExportMode, AsanaExportMode, WebhookExportMode, ZohoSprintsExportMode } from '../types';
-import { refineBugReport } from '../services/geminiService';
+import { Slide, Annotation, ToolType, Point, ClickUpExportMode, SlackExportMode, IntegrationConfig, IntegrationSource, JiraExportMode, TeamsExportMode, AsanaExportMode, WebhookExportMode, ZohoSprintsExportMode, TrelloExportMode } from '../types';
+import { refineBugReport, scanImageForIssues } from '../services/geminiService';
 import { createClickUpTask, uploadClickUpAttachment, generateTaskDescription, generateMasterDescription, updateClickUpTask } from '../services/clickUpService';
 import { postSlackMessage, uploadSlackFile, generateSlideMessage } from '../services/slackService';
 import { createJiraIssue, uploadJiraAttachment } from '../services/jiraService';
 import { postTeamsMessage } from '../services/teamsService';
 import { createAsanaTask, uploadAsanaAttachment } from '../services/asanaService';
+import { createTrelloCard, uploadTrelloAttachment } from '../services/trelloService';
 import { sendToWebhook } from '../services/webhookService';
 import { createZohoSprintsItem, uploadZohoSprintsAttachment } from '../services/zohoSprintsService';
 import { uploadToDrive } from '../services/googleDriveService';
@@ -15,6 +16,7 @@ import { SlackModal } from './SlackModal';
 import { JiraModal } from './JiraModal';
 import { TeamsModal } from './TeamsModal';
 import { AsanaModal } from './AsanaModal';
+import { TrelloModal } from './TrelloModal';
 import { WebhookModal } from './WebhookModal';
 import { ZohoSprintsModal } from './ZohoSprintsModal';
 import { IntegrationModal } from './IntegrationModal';
@@ -51,7 +53,11 @@ import {
   Share2,
   ChevronDown,
   Settings,
-  HardDrive
+  HardDrive,
+  Sparkles,
+  Loader2,
+  ScanEye,
+  Trello
 } from 'lucide-react';
 
 interface EditorProps {
@@ -65,6 +71,10 @@ interface EditorProps {
   onRecordVideo: () => void;
   onClose: () => void;
 }
+
+const AVAILABLE_INTEGRATIONS: IntegrationSource[] = [
+  'ClickUp', 'Jira', 'Slack', 'Teams', 'Asana', 'Trello', 'Webhook', 'GoogleDrive'
+];
 
 export const Editor: React.FC<EditorProps> = ({ 
   slides, 
@@ -98,6 +108,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [aiLoadingId, setAiLoadingId] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
   
@@ -112,6 +123,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [isJiraModalOpen, setIsJiraModalOpen] = useState(false);
   const [isTeamsModalOpen, setIsTeamsModalOpen] = useState(false);
   const [isAsanaModalOpen, setIsAsanaModalOpen] = useState(false);
+  const [isTrelloModalOpen, setIsTrelloModalOpen] = useState(false);
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState(false);
   const [isZohoSprintsModalOpen, setIsZohoSprintsModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -151,6 +163,7 @@ export const Editor: React.FC<EditorProps> = ({
               if (config.slackToken) connected.push('Slack');
               if (config.teamsWebhookUrl) connected.push('Teams'); // Updated check
               if (config.asanaToken) connected.push('Asana');
+              if (config.trelloToken) connected.push('Trello');
               if (config.webhookUrl) connected.push('Webhook');
               if (config.zohoSprintsToken) connected.push('ZohoSprints');
               if (config.googleDriveToken) connected.push('GoogleDrive');
@@ -158,7 +171,7 @@ export const Editor: React.FC<EditorProps> = ({
           }
       };
       checkConnections();
-  }, [isClickUpModalOpen, isJiraModalOpen, isSlackModalOpen, isTeamsModalOpen, isAsanaModalOpen, isWebhookModalOpen, isZohoSprintsModalOpen, integrationModalSource]);
+  }, [isClickUpModalOpen, isJiraModalOpen, isSlackModalOpen, isTeamsModalOpen, isAsanaModalOpen, isTrelloModalOpen, isWebhookModalOpen, isZohoSprintsModalOpen, integrationModalSource]);
 
   // Auto-focus new annotation comment
   useEffect(() => {
@@ -406,6 +419,90 @@ export const Editor: React.FC<EditorProps> = ({
     handleCommentChange(id, refinedText);
     setAiLoadingId(null);
     addToast('Text refined with AI', 'success');
+  };
+
+  const handleRefineAll = async () => {
+    if (annotations.length === 0) return;
+    
+    setIsProcessing(true);
+    addToast("Rephrasing all observations...", "info");
+    
+    try {
+        // Create an array of promises
+        const promises = annotations.map(async (ann) => {
+            if (!ann.comment || ann.comment.trim().length < 3) return ann; // Skip empty or very short
+            const refined = await refineBugReport(ann.comment);
+            return { ...ann, comment: refined };
+        });
+
+        const newAnnotations = await Promise.all(promises);
+        
+        setAnnotations(newAnnotations);
+        onUpdateSlide({ ...activeSlide, annotations: newAnnotations });
+        addToast("All observations rephrased.", "success");
+    } catch (e) {
+        console.error(e);
+        addToast("Failed to rephrase observations.", "error");
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  const handleAutoScan = async () => {
+      if (activeSlide.type !== 'image') {
+          addToast("Auto-scan only supports images.", "error");
+          return;
+      }
+      
+      setIsScanning(true);
+      addToast("Scanning image for text issues...", "info");
+
+      try {
+          // We need the natural dimensions of the image to map normalized coordinates
+          // mediaRef should be pointing to the image in the canvas
+          const imgEl = mediaRef.current as HTMLImageElement;
+          if (!imgEl) throw new Error("Image element not found");
+          
+          const naturalWidth = imgEl.naturalWidth;
+          const naturalHeight = imgEl.naturalHeight;
+
+          const issues = await scanImageForIssues(activeSlide.src);
+          
+          if (issues.length === 0) {
+              addToast("No major text issues found.", "success");
+              return;
+          }
+
+          const newAnnotations: Annotation[] = issues.map((issue, index) => {
+              // Gemini returns [ymin, xmin, ymax, xmax] on 0-1000 scale
+              const [ymin, xmin, ymax, xmax] = issue.coordinates;
+              
+              const startX = (xmin / 1000) * naturalWidth;
+              const startY = (ymin / 1000) * naturalHeight;
+              const endX = (xmax / 1000) * naturalWidth;
+              const endY = (ymax / 1000) * naturalHeight;
+
+              return {
+                  id: Date.now() + index,
+                  type: ToolType.RECTANGLE,
+                  start: { x: startX, y: startY },
+                  end: { x: endX, y: endY },
+                  comment: `[AI Detected] ${issue.explanation}\nSuggestion: "${issue.suggestion}"`,
+                  color: '#f59e0b', // Amber/Orange for AI warnings
+              };
+          });
+
+          const updatedAnnotations = [...annotations, ...newAnnotations];
+          setAnnotations(updatedAnnotations);
+          onUpdateSlide({ ...activeSlide, annotations: updatedAnnotations });
+          addToast(`Found ${issues.length} potential issues.`, "success");
+
+      } catch (e) {
+          console.error(e);
+          addToast("Auto-scan failed.", "error");
+      } finally {
+          setIsScanning(false);
+      }
   };
 
   const handleNextSlide = () => {
@@ -814,6 +911,38 @@ export const Editor: React.FC<EditorProps> = ({
       } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
   };
 
+  const handleExportToTrello = async (mode: TrelloExportMode, listId: string, customTitle: string, customDescription: string) => {
+      setExportError(null);
+      const savedConfig = localStorage.getItem('bugsnap_config');
+      if (!savedConfig) { setExportError("Please configure Trello in Integrations first."); return; }
+      const config: IntegrationConfig = JSON.parse(savedConfig);
+      if (!config.trelloApiKey || !config.trelloToken) { setExportError("Missing Trello configuration."); return; }
+      setIsExporting(true);
+      try {
+          const optimizeImage = (s: Slide) => generateCompositeImage(s, 'image/jpeg', 0.7);
+          const ext = '.jpg';
+          let cardUrl = "";
+          
+          if (mode === 'current') {
+              const card = await createTrelloCard(config.trelloApiKey, config.trelloToken, listId, customTitle || activeSlide.name || 'Bug Report', customDescription || generateTaskDescription(activeSlide));
+              cardUrl = card.url;
+              const blob = await optimizeImage(activeSlide);
+              await uploadTrelloAttachment(config.trelloApiKey, config.trelloToken, card.id, blob, `report${ext}`);
+          } else if (mode === 'all_attachments') {
+              const card = await createTrelloCard(config.trelloApiKey, config.trelloToken, listId, customTitle || `Bug Report - ${new Date().toLocaleString()}`, customDescription || generateMasterDescription(slides));
+              cardUrl = card.url;
+              for (const slide of slides) {
+                  const blob = await optimizeImage(slide);
+                  await uploadTrelloAttachment(config.trelloApiKey, config.trelloToken, card.id, blob, `${slide.name}${ext}`);
+              }
+          }
+          
+          setIsTrelloModalOpen(false);
+          setCreatedTaskUrl(cardUrl);
+          setCreatedTaskPlatform('Trello');
+      } catch (error) { console.error(error); const msg = error instanceof Error ? error.message : 'Unknown error'; setExportError(msg); if (!msg.includes('corsdemo')) addToast(msg, 'error'); } finally { setIsExporting(false); }
+  };
+
   // Updated Teams Handler
   const handleExportToTeams = async (mode: TeamsExportMode) => {
     setExportError(null);
@@ -1113,6 +1242,7 @@ export const Editor: React.FC<EditorProps> = ({
       if (source === 'Slack') setIsSlackModalOpen(true);
       if (source === 'Teams') setIsTeamsModalOpen(true);
       if (source === 'Asana') setIsAsanaModalOpen(true);
+      if (source === 'Trello') setIsTrelloModalOpen(true);
       if (source === 'Webhook') setIsWebhookModalOpen(true);
       if (source === 'ZohoSprints') setIsZohoSprintsModalOpen(true);
       setIsExportDropdownOpen(false);
@@ -1125,6 +1255,7 @@ export const Editor: React.FC<EditorProps> = ({
           case 'Slack': return <Share2 size={16} />;
           case 'Teams': return <Users size={16} />;
           case 'Asana': return <CheckCircle2 size={16} />;
+          case 'Trello': return <Trello size={16} />;
           case 'Webhook': return <Webhook size={16} />;
           case 'ZohoSprints': return <Database size={16} />;
           case 'GoogleDrive': return <HardDrive size={16} />;
@@ -1200,6 +1331,17 @@ export const Editor: React.FC<EditorProps> = ({
         activeSlideId={activeSlideId}
         error={exportError}
         onConfigure={() => { setIsAsanaModalOpen(false); setIntegrationModalSource('Asana'); }}
+      />
+
+      <TrelloModal
+        isOpen={isTrelloModalOpen}
+        onClose={() => { setIsTrelloModalOpen(false); setExportError(null); }}
+        onExport={handleExportToTrello}
+        loading={isExporting}
+        slides={slides}
+        activeSlideId={activeSlideId}
+        error={exportError}
+        onConfigure={() => { setIsTrelloModalOpen(false); setIntegrationModalSource('Trello'); }}
       />
 
       <WebhookModal
@@ -1317,12 +1459,35 @@ export const Editor: React.FC<EditorProps> = ({
            {/* Dynamic Export Button */}
            <div className="relative" ref={exportDropdownRef}>
                {connectedSources.length === 0 ? (
-                   <button 
-                        onClick={() => setIntegrationModalSource('ClickUp')} // Open Integrations generally
-                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-[#272727] dark:hover:bg-[#333] text-slate-700 dark:text-zinc-200 text-xs font-bold rounded-lg transition-colors"
-                   >
-                       <Settings size={16} /> Connect Tools
-                   </button>
+                   <>
+                       <button 
+                            onClick={() => setIsExportDropdownOpen(!isExportDropdownOpen)}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors"
+                       >
+                           <Settings size={16} /> Connect Tools
+                           <ChevronDown size={14} className={`transition-transform ${isExportDropdownOpen ? 'rotate-180' : ''}`} />
+                       </button>
+                       {isExportDropdownOpen && (
+                           <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-xl border border-slate-200 dark:border-[#272727] overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
+                               <div className="px-3 py-2 text-xs font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-wider border-b border-slate-100 dark:border-[#272727]">Select Integration</div>
+                               <div className="p-1 max-h-[300px] overflow-y-auto">
+                                   {AVAILABLE_INTEGRATIONS.map(source => (
+                                       <button 
+                                            key={source}
+                                            onClick={() => {
+                                                setIntegrationModalSource(source);
+                                                setIsExportDropdownOpen(false);
+                                            }}
+                                            className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-slate-700 dark:text-zinc-200 hover:bg-slate-50 dark:hover:bg-[#272727] rounded-lg transition-colors"
+                                       >
+                                           <div className="text-slate-500 dark:text-zinc-400">{getSourceIcon(source)}</div>
+                                           {source === 'GoogleDrive' ? 'Google Drive' : source}
+                                       </button>
+                                   ))}
+                               </div>
+                           </div>
+                       )}
+                   </>
                ) : (
                    <>
                        <button 
@@ -1458,9 +1623,33 @@ export const Editor: React.FC<EditorProps> = ({
 
         {/* Right Sidebar (Comments) */}
         <div className="w-80 bg-white dark:bg-[#0f0f0f] border-l border-slate-200 dark:border-[#272727] flex flex-col transition-colors">
-           <div className="p-4 border-b border-slate-200 dark:border-[#272727]">
-              <h2 className="font-bold text-slate-900 dark:text-white text-lg">Observations</h2>
-              <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Document findings for this slide.</p>
+           <div className="p-4 border-b border-slate-200 dark:border-[#272727] flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                  <div>
+                      <h2 className="font-bold text-slate-900 dark:text-white text-lg">Observations</h2>
+                      <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Document findings for this slide.</p>
+                  </div>
+              </div>
+              <div className="flex gap-2">
+                  <button 
+                    onClick={handleAutoScan}
+                    disabled={isProcessing || isScanning || activeSlide.type !== 'image'}
+                    className="flex-1 p-2 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs font-bold"
+                    title="Auto-detect text issues with AI"
+                  >
+                     {isScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanEye size={14} />}
+                     <span className="hidden sm:inline">AI Scan</span>
+                  </button>
+                  <button 
+                    onClick={handleRefineAll}
+                    disabled={isProcessing || annotations.length === 0}
+                    className="flex-1 p-2 text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs font-bold"
+                    title="Rephrase all observations with AI"
+                  >
+                     {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                     <span className="hidden sm:inline">Refine All</span>
+                  </button>
+              </div>
            </div>
            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {annotations.length === 0 && (
