@@ -18,8 +18,27 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Atlassian-Token, X-Figma-Token, Accept, User-Agent');
 
   try {
+    // Parse body for POST/PUT/PATCH/DELETE requests
+    let parsedBody = null;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      // Vercel automatically parses JSON, but we need to handle raw body for FormData
+      if (req.headers['content-type']?.includes('multipart/form-data')) {
+        // For FormData, Vercel provides it as a parsed object or we need to handle it differently
+        // Since Vercel doesn't parse multipart automatically, we'll get it from the raw body
+        parsedBody = req.body;
+      } else if (typeof req.body === 'string') {
+        try {
+          parsedBody = JSON.parse(req.body);
+        } catch {
+          parsedBody = req.body;
+        }
+      } else {
+        parsedBody = req.body;
+      }
+    }
+
     // Get URL from query or body
-    let targetUrl = req.query.url || (req.body && typeof req.body === 'object' ? req.body.url : null);
+    let targetUrl = req.query.url || (parsedBody && typeof parsedBody === 'object' ? parsedBody.url : null);
     
     if (!targetUrl) {
       return res.status(400).json({ error: 'Missing URL parameter' });
@@ -35,7 +54,7 @@ export default async function handler(req, res) {
 
     // Extract and forward headers
     const headers = {};
-    const skipHeaders = ['host', 'connection', 'content-length', 'referer', 'origin'];
+    const skipHeaders = ['host', 'connection', 'content-length', 'referer', 'origin', 'content-encoding'];
     const headerNameMap = {
       'authorization': 'Authorization',
       'accept': 'Accept',
@@ -54,9 +73,11 @@ export default async function handler(req, res) {
       }
     });
 
-    // Ensure Authorization header is forwarded
-    if (req.headers.authorization || req.headers.Authorization) {
-      headers['Authorization'] = req.headers.authorization || req.headers.Authorization;
+    // Ensure Authorization header is forwarded (check all possible cases)
+    if (req.headers.authorization) {
+      headers['Authorization'] = req.headers.authorization;
+    } else if (req.headers.Authorization) {
+      headers['Authorization'] = req.headers.Authorization;
     }
 
     // Prepare request options
@@ -67,15 +88,40 @@ export default async function handler(req, res) {
 
     // Handle body for POST/PUT/PATCH/DELETE
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      if (req.body) {
-        if (typeof req.body === 'string') {
+      // Check if it's FormData (multipart/form-data)
+      if (req.headers['content-type']?.includes('multipart/form-data')) {
+        // For FormData, we need to reconstruct it or pass the raw body
+        // Vercel doesn't parse multipart automatically, so we'll need to handle this
+        // For now, we'll try to get the raw body if available
+        // Note: Vercel serverless functions may need special handling for FormData
+        // If the body is already a Buffer or string, use it directly
+        if (Buffer.isBuffer(req.body) || typeof req.body === 'string') {
           fetchOptions.body = req.body;
-        } else if (typeof req.body === 'object') {
-          // If body has url property, remove it before sending
-          const bodyCopy = { ...req.body };
-          delete bodyCopy.url;
-          fetchOptions.body = JSON.stringify(bodyCopy);
-          headers['Content-Type'] = 'application/json';
+          // Keep the original Content-Type with boundary
+          if (req.headers['content-type']) {
+            headers['Content-Type'] = req.headers['content-type'];
+          }
+        } else if (parsedBody) {
+          // If it's parsed, try to reconstruct FormData (this is a fallback)
+          const formData = new FormData();
+          Object.keys(parsedBody).forEach(key => {
+            if (key !== 'url') {
+              formData.append(key, parsedBody[key]);
+            }
+          });
+          fetchOptions.body = formData;
+        }
+      } else if (parsedBody) {
+        // JSON body - extract body data (excluding 'url' which is in query)
+        if (typeof parsedBody === 'object') {
+          const bodyCopy = { ...parsedBody };
+          delete bodyCopy.url; // Remove URL from body if present
+          if (Object.keys(bodyCopy).length > 0) {
+            fetchOptions.body = JSON.stringify(bodyCopy);
+            headers['Content-Type'] = 'application/json';
+          }
+        } else if (typeof parsedBody === 'string') {
+          fetchOptions.body = parsedBody;
         }
       }
     }
@@ -88,7 +134,11 @@ export default async function handler(req, res) {
     let body;
     
     if (contentType.includes('application/json')) {
-      body = await response.json();
+      try {
+        body = await response.json();
+      } catch {
+        body = await response.text();
+      }
     } else if (contentType.includes('text/')) {
       body = await response.text();
     } else {
@@ -108,6 +158,8 @@ export default async function handler(req, res) {
     
     if (body instanceof ArrayBuffer) {
       res.send(Buffer.from(body));
+    } else if (typeof body === 'object' && !Buffer.isBuffer(body)) {
+      res.json(body);
     } else {
       res.send(body);
     }

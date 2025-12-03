@@ -15,8 +15,12 @@
 // In production, this should be set to your backend server URL (e.g., your Vercel serverless function or separate backend)
 // For Vercel, you can create a serverless function at /api/proxy or deploy server.js separately
 const getBackendProxyUrl = () => {
+  // Check environment variable first (highest priority)
   const envUrl = (import.meta as any).env?.VITE_PROXY_URL;
-  if (envUrl) return envUrl;
+  if (envUrl) {
+    console.log('🔧 Using VITE_PROXY_URL from environment:', envUrl);
+    return envUrl;
+  }
   
   // Auto-detect if we're in production and try to use same origin API route
   // This works if you deploy the proxy as a Vercel serverless function at /api/proxy
@@ -24,15 +28,20 @@ const getBackendProxyUrl = () => {
     const origin = window.location.origin;
     // Only use same-origin if we're not on localhost (production)
     if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
-      return `${origin}/api/proxy`;
+      const prodUrl = `${origin}/api/proxy`;
+      console.log('🌐 Auto-detected production URL:', prodUrl);
+      return prodUrl;
     }
   }
   
   // Default to localhost for development
-  return 'http://localhost:3001/api/proxy';
+  const devUrl = 'http://localhost:3001/api/proxy';
+  console.log('💻 Using development URL:', devUrl);
+  return devUrl;
 };
 
 const BACKEND_PROXY_URL = getBackendProxyUrl();
+console.log('📡 Backend Proxy URL configured:', BACKEND_PROXY_URL);
 
 // Fallback proxies (only used if backend is unavailable)
 interface ProxyProvider {
@@ -188,6 +197,7 @@ const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Pr
   }
 
   try {
+    console.log('🔄 Attempting backend proxy request to:', proxyUrl);
     const response = await fetch(proxyUrl, {
       ...proxyRequest,
       signal: backendController.signal
@@ -195,16 +205,25 @@ const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Pr
     
     clearTimeout(backendTimeoutId);
     
+    console.log('📥 Backend proxy response:', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    });
+    
     // If backend proxy is working, return the response
     if (response.ok || response.status < 500) {
+      console.log('✅ Backend proxy succeeded');
       return response;
     }
 
     // If backend is down (5xx), throw to trigger fallback
     if (response.status >= 500) {
+      console.warn('⚠️ Backend proxy returned 5xx error, will try fallback');
       throw new Error('Backend proxy unavailable');
     }
 
+    // For 4xx errors, return the response (these are API errors, not proxy errors)
     return response;
   } catch (error: any) {
     clearTimeout(backendTimeoutId);
@@ -214,6 +233,12 @@ const fetchWithBackendProxy = async (url: string, options: RequestInit = {}): Pr
       if (options.signal?.aborted) {
         throw error; // Re-throw the original abort error
       }
+      console.warn('⏱️ Backend proxy timeout, will try fallback');
+      throw new Error('Backend proxy unavailable');
+    }
+    // Network errors (Failed to fetch, etc.)
+    if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
+      console.warn('🌐 Backend proxy network error, will try fallback:', error.message);
       throw new Error('Backend proxy unavailable');
     }
     // Re-throw other errors
