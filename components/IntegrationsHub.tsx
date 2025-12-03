@@ -2,12 +2,14 @@
 import React, { useState, useEffect } from 'react';
 import { IntegrationConfig, IntegrationSource } from '../types';
 import { useToast } from './ToastProvider';
-import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook, HardDrive } from 'lucide-react';
+import { Layers, Slack, CreditCard, CheckCircle2, ArrowRight, Zap, Trash2, Users, Webhook, HardDrive, CalendarClock, Settings, Trello, Briefcase, Database } from 'lucide-react';
 import { IntegrationModal } from './IntegrationModal';
+import { ScheduleModal } from './ScheduleModal';
 
 export const IntegrationsHub: React.FC = () => {
   const [config, setConfig] = useState<IntegrationConfig>({});
   const [activeModal, setActiveModal] = useState<IntegrationSource | null>(null);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const { addToast } = useToast();
 
   useEffect(() => {
@@ -20,7 +22,8 @@ export const IntegrationsHub: React.FC = () => {
   const handleSaveConfig = (newConfig: IntegrationConfig) => {
     setConfig(prev => ({ ...prev, ...newConfig }));
     localStorage.setItem('bugsnap_config', JSON.stringify({ ...config, ...newConfig }));
-    addToast(`${activeModal} connected successfully!`, 'success');
+    if (activeModal) addToast(`${activeModal} connected successfully!`, 'success');
+    else addToast("Configuration saved.", 'success');
     setActiveModal(null);
   };
 
@@ -42,10 +45,16 @@ export const IntegrationsHub: React.FC = () => {
       } else if (source === 'Asana') {
           newConfig.asanaToken = undefined;
           newConfig.asanaWorkspaceId = undefined;
+      } else if (source === 'Trello') {
+          newConfig.trelloApiKey = undefined;
+          newConfig.trelloToken = undefined;
       } else if (source === 'Webhook') {
           newConfig.webhookUrl = undefined;
       } else if (source === 'GoogleDrive') {
           newConfig.googleDriveToken = undefined;
+      } else if (source === 'ZohoSprints') {
+          newConfig.zohoSprintsToken = undefined;
+          newConfig.zohoSprintsDC = undefined;
       }
       
       setConfig(newConfig);
@@ -60,8 +69,10 @@ export const IntegrationsHub: React.FC = () => {
           case 'Jira': return !!config.jiraToken && !!config.jiraUrl && !!config.jiraEmail;
           case 'Teams': return !!config.teamsWebhookUrl; // Updated check
           case 'Asana': return !!config.asanaToken;
+          case 'Trello': return !!config.trelloApiKey && !!config.trelloToken;
           case 'Webhook': return !!config.webhookUrl;
           case 'GoogleDrive': return !!config.googleDriveToken;
+          case 'ZohoSprints': return !!config.zohoSprintsToken && !!config.zohoSprintsDC;
       }
   };
 
@@ -75,6 +86,13 @@ export const IntegrationsHub: React.FC = () => {
         onSave={handleSaveConfig}
       />
 
+      <ScheduleModal
+        isOpen={showScheduleModal}
+        onClose={() => setShowScheduleModal(false)}
+        currentConfig={config}
+        onSave={handleSaveConfig}
+      />
+
       <div className="max-w-6xl mx-auto p-8">
         <header className="mb-10 text-center">
             <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Integrations Hub</h1>
@@ -82,6 +100,29 @@ export const IntegrationsHub: React.FC = () => {
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            {/* Scheduled Reporting Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-indigo-500 dark:hover:border-indigo-500 transition-all group relative overflow-hidden">
+                {config.scheduleEnabled && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> ACTIVE
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <CalendarClock size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Scheduled Reports</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">
+                    Automatically send daily dashboard summaries to Slack or Teams at a specific time.
+                </p>
+                <button 
+                    onClick={() => setShowScheduleModal(true)}
+                    className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 dark:bg-[#272727] text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-[#333]"
+                >
+                    <Settings size={16} /> Configure Schedule
+                </button>
+            </div>
+
             {/* ClickUp Card */}
             <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#7B68EE] dark:hover:border-[#7B68EE] transition-all group relative overflow-hidden">
                 {isConnected('ClickUp') && (
@@ -112,59 +153,6 @@ export const IntegrationsHub: React.FC = () => {
                 )}
             </div>
 
-            {/* Google Drive Card */}
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-blue-500 dark:hover:border-blue-500 transition-all group relative overflow-hidden">
-                {isConnected('GoogleDrive') && (
-                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
-                        <CheckCircle2 size={12} /> CONNECTED
-                    </div>
-                )}
-                <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <HardDrive size={32} />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Google Drive</h3>
-                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">
-                    Backup storage for when your issue tracker (like ClickUp) is full. Images are saved to Drive and linked in the task.
-                </p>
-                
-                {isConnected('GoogleDrive') ? (
-                    <button 
-                        onClick={() => handleDisconnect('GoogleDrive')}
-                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
-                    >
-                        <Trash2 size={16} /> Disconnect
-                    </button>
-                ) : (
-                    <button 
-                        onClick={() => setActiveModal('GoogleDrive')}
-                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
-                    >
-                        Connect Drive <ArrowRight size={16} />
-                    </button>
-                )}
-            </div>
-
-            {/* Slack Card */}
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#4A154B] dark:hover:border-[#4A154B] transition-all group relative overflow-hidden">
-                {isConnected('Slack') && (
-                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
-                        <CheckCircle2 size={12} /> CONNECTED
-                    </div>
-                )}
-                <div className="w-14 h-14 bg-[#4A154B]/10 dark:bg-[#4A154B]/20 text-[#4A154B] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <Slack size={32} />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Slack</h3>
-                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Share daily dashboard summaries and instant bug alerts to your team channels.</p>
-                <button 
-                     onClick={() => setActiveModal('Slack')}
-                     className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${isConnected('Slack') ? 'bg-slate-100 dark:bg-[#272727] text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-[#3f3f3f]' : 'bg-[#4A154B] text-white hover:bg-[#3f1240] shadow-md hover:shadow-lg'}`}
-                >
-                    {isConnected('Slack') ? 'Manage Connection' : 'Connect Slack'}
-                    {!isConnected('Slack') && <ArrowRight size={16} />}
-                </button>
-            </div>
-
             {/* Jira Card */}
             <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#0052CC] dark:hover:border-[#0052CC] transition-all group relative overflow-hidden">
                 {isConnected('Jira') && (
@@ -191,6 +179,96 @@ export const IntegrationsHub: React.FC = () => {
                          className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#0052CC] text-white hover:bg-[#0747A6] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
                     >
                         Connect Jira <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Asana Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#F06A6A] dark:hover:border-[#F06A6A] transition-all group relative overflow-hidden">
+                {isConnected('Asana') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-[#F06A6A]/10 dark:bg-[#F06A6A]/20 text-[#F06A6A] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <CheckCircle2 size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Asana</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Sync annotated bug reports to your Asana projects as tasks.</p>
+                
+                {isConnected('Asana') ? (
+                     <button 
+                        onClick={() => handleDisconnect('Asana')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('Asana')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#F06A6A] text-white hover:bg-[#e05a5a] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Asana <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Trello Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#0079BF] dark:hover:border-[#0079BF] transition-all group relative overflow-hidden">
+                {isConnected('Trello') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-[#0079BF]/10 dark:bg-[#0079BF]/20 text-[#0079BF] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Trello size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Trello</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Create cards on your Trello boards directly from bug reports.</p>
+                
+                {isConnected('Trello') ? (
+                     <button 
+                        onClick={() => handleDisconnect('Trello')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('Trello')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#0079BF] text-white hover:bg-[#056dae] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Trello <ArrowRight size={16} />
+                    </button>
+                )}
+            </div>
+
+            {/* Zoho Sprints Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-teal-500 dark:hover:border-teal-500 transition-all group relative overflow-hidden">
+                {isConnected('ZohoSprints') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-teal-500/10 dark:bg-teal-500/20 text-teal-500 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Database size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Zoho Sprints</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Create items in your Zoho Sprints projects.</p>
+                
+                {isConnected('ZohoSprints') ? (
+                     <button 
+                        onClick={() => handleDisconnect('ZohoSprints')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
+                    >
+                        <Trash2 size={16} /> Disconnect
+                    </button>
+                ) : (
+                    <button 
+                         onClick={() => setActiveModal('ZohoSprints')}
+                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-teal-500 text-white hover:bg-teal-600 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                    >
+                        Connect Sprints <ArrowRight size={16} />
                     </button>
                 )}
             </div>
@@ -225,32 +303,55 @@ export const IntegrationsHub: React.FC = () => {
                 )}
             </div>
 
-            {/* Asana Card */}
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#F06A6A] dark:hover:border-[#F06A6A] transition-all group relative overflow-hidden">
-                {isConnected('Asana') && (
+            {/* Slack Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-[#4A154B] dark:hover:border-[#4A154B] transition-all group relative overflow-hidden">
+                {isConnected('Slack') && (
                     <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
                         <CheckCircle2 size={12} /> CONNECTED
                     </div>
                 )}
-                <div className="w-14 h-14 bg-[#F06A6A]/10 dark:bg-[#F06A6A]/20 text-[#F06A6A] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <CheckCircle2 size={32} />
+                <div className="w-14 h-14 bg-[#4A154B]/10 dark:bg-[#4A154B]/20 text-[#4A154B] rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Slack size={32} />
                 </div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Asana</h3>
-                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Sync annotated bug reports to your Asana projects as tasks.</p>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Slack</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">Share daily dashboard summaries and instant bug alerts to your team channels.</p>
+                <button 
+                     onClick={() => setActiveModal('Slack')}
+                     className={`w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${isConnected('Slack') ? 'bg-slate-100 dark:bg-[#272727] text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-[#3f3f3f]' : 'bg-[#4A154B] text-white hover:bg-[#3f1240] shadow-md hover:shadow-lg'}`}
+                >
+                    {isConnected('Slack') ? 'Manage Connection' : 'Connect Slack'}
+                    {!isConnected('Slack') && <ArrowRight size={16} />}
+                </button>
+            </div>
+
+            {/* Google Drive Card */}
+            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-slate-200 dark:border-[#272727] p-6 flex flex-col hover:border-blue-500 dark:hover:border-blue-500 transition-all group relative overflow-hidden">
+                {isConnected('GoogleDrive') && (
+                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl shadow-sm flex items-center gap-1">
+                        <CheckCircle2 size={12} /> CONNECTED
+                    </div>
+                )}
+                <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <HardDrive size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Google Drive</h3>
+                <p className="text-slate-500 dark:text-zinc-400 text-sm mb-6 flex-1">
+                    Backup storage for when your issue tracker (like ClickUp) is full. Images are saved to Drive and linked in the task.
+                </p>
                 
-                {isConnected('Asana') ? (
-                     <button 
-                        onClick={() => handleDisconnect('Asana')}
+                {isConnected('GoogleDrive') ? (
+                    <button 
+                        onClick={() => handleDisconnect('GoogleDrive')}
                         className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-800"
                     >
                         <Trash2 size={16} /> Disconnect
                     </button>
                 ) : (
                     <button 
-                         onClick={() => setActiveModal('Asana')}
-                         className="w-full py-2.5 rounded-lg font-bold text-sm bg-[#F06A6A] text-white hover:bg-[#e05a5a] flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+                        onClick={() => setActiveModal('GoogleDrive')}
+                        className="w-full py-2.5 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
                     >
-                        Connect Asana <ArrowRight size={16} />
+                        Connect Drive <ArrowRight size={16} />
                     </button>
                 )}
             </div>

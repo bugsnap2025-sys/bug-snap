@@ -6,6 +6,7 @@ import { fetchSlackHistory, postSlackMessage, generateDashboardSummary } from '.
 import { fetchJiraIssues } from '../services/jiraService';
 import { postTeamsMessage } from '../services/teamsService';
 import { fetchAsanaTasks, getAsanaWorkspaces, getAsanaProjects } from '../services/asanaService';
+import { fetchTrelloCards } from '../services/trelloService';
 import { fetchZohoSprintsItems } from '../services/zohoSprintsService';
 import { useToast } from './ToastProvider';
 import { IntegrationModal } from './IntegrationModal';
@@ -29,7 +30,8 @@ import {
   Briefcase,
   Database,
   Plus,
-  Users
+  Users,
+  Trello
 } from 'lucide-react';
 
 const KPICard = ({ label, value, color, icon }: { label: string, value: string | number, color: string, icon: React.ReactNode }) => {
@@ -136,6 +138,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
              if (config.slackToken) connected.push('Slack');
              if (config.teamsWebhookUrl) connected.push('Teams'); // Updated to use webhookUrl check
              if (config.asanaToken) connected.push('Asana');
+             if (config.trelloToken) connected.push('Trello');
              if (config.zohoSprintsToken) connected.push('ZohoSprints');
              
              setConnectedSources(connected);
@@ -270,6 +273,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
             const asanaTasks = await fetchAsanaTasks(config.asanaToken, selectedAsanaProjectId);
             setIssues(asanaTasks);
         }
+        else if (activeSource === 'Trello') {
+            if (!config.trelloApiKey || !config.trelloToken) {
+                setError("Trello is not configured.");
+                setIssues([]);
+                setIsLoading(false);
+                return;
+            }
+            const trelloCards = await fetchTrelloCards(config.trelloApiKey, config.trelloToken);
+            setIssues(trelloCards);
+        }
         else if (activeSource === 'ZohoSprints') {
             if (!config.zohoSprintsToken || !config.zohoSprintsDC) {
                 setError("Zoho Sprints is not configured.");
@@ -277,12 +290,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                 setIsLoading(false);
                 return;
             }
-            // Note: To fetch sprints items we typically need TeamID and ProjectID.
-            // Since we don't store them globally like ClickUp List, we might need to fetch defaults first.
-            // For simplicity in this dashboard view, we might skip deep fetching or use placeholders.
-            // However, to honor the request "fetching support", we will try to fetch. 
-            // Real implementation would require a Project Selector similar to Asana/ClickUp.
-            // Currently alerting limitation.
             setError("Select a Team/Project context feature coming soon for Zoho Sprints dashboard.");
             setIssues([]);
         }
@@ -517,6 +524,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
           case 'Jira': return <CreditCard size={16} />;
           case 'Slack': return <Slack size={16} />;
           case 'Asana': return <CheckCircle2 size={16} />;
+          case 'Trello': return <Trello size={16} />;
           case 'ZohoSprints': return <Database size={16} />;
           default: return <Layers size={16} />;
       }
@@ -673,6 +681,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onCapture, onRecord, onUpl
                             <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
                         </button>
                     </div>
+                 )}
+
+                 {activeSource === 'Trello' && (
+                     <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-500">My Cards</span>
+                        <button 
+                            onClick={handleRefresh} 
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-[#0079BF] transition"
+                            title="Refresh Data"
+                            disabled={isLoading}
+                        >
+                            <RefreshCcw size={16} className={isLoading ? "animate-spin" : ""} />
+                        </button>
+                     </div>
                  )}
 
                 {/* Share Summary Button (Slack) */}
