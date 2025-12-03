@@ -38,7 +38,6 @@ const BACKEND_PROXY_URL = getBackendProxyUrl();
 interface ProxyProvider {
   name: string;
   format: (url: string) => string;
-  
   requiresHeaders?: boolean;
   methods?: string[]; // If undefined, supports all. If defined, only supports listed.
 }
