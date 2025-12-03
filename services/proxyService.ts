@@ -24,6 +24,7 @@ const PROXY_PROVIDERS: ProxyProvider[] = [
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     requiresHeaders: false
   },
+  
   {
     name: 'cors-anywhere',
     format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
