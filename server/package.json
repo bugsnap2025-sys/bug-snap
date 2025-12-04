@@ -1,0 +1,20 @@
+{
+    "name": "bugsnap-backend",
+    "version": "1.0.0",
+    "description": "Express backend for BugSnap - CORS proxy and scheduled reporting",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js"
+    },
+    "dependencies": {
+        "express": "^4.18.2",
+        "cors": "^2.8.5",
+        "dotenv": "^16.3.1",
+        "node-cron": "^3.0.3",
+        "node-fetch": "^2.7.0"
+    },
+    "devDependencies": {
+        "nodemon": "^3.0.2"
+    }
+}

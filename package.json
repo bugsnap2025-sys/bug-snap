@@ -9,12 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "recharts": "^3.4.1",
-    "lucide-react": "^0.554.0",
-    "react-dom": "^19.2.0",
-    "react": "^19.2.0",
+    "@azure/msal-browser": "^4.27.0",
     "@google/genai": "^1.30.0",
-    "jspdf": "^2.5.1"
+    "jspdf": "^2.5.1",
+    "lucide-react": "^0.554.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.4.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

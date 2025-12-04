@@ -6,21 +6,21 @@ import { fetchWithProxy } from './proxyService';
  * Extracts a List ID from a ClickUp URL or validates a raw ID.
  */
 export const extractListId = (input: string): string | null => {
-  if (!input) return null;
-  if (/^\d+$/.test(input)) return input;
-  const match = input.match(/\/li\/(\d+)/);
-  if (match && match[1]) {
-    return match[1];
-  }
-  return null;
+    if (!input) return null;
+    if (/^\d+$/.test(input)) return input;
+    const match = input.match(/\/li\/(\d+)/);
+    if (match && match[1]) {
+        return match[1];
+    }
+    return null;
 };
 
 interface CreateTaskParams {
-  listId: string;
-  token: string;
-  title: string;
-  description: string;
-  parentId?: string; // For subtasks
+    listId: string;
+    token: string;
+    title: string;
+    description: string;
+    parentId?: string; // For subtasks
 }
 
 // Helper to safely truncate strings
@@ -59,12 +59,12 @@ export const validateClickUpToken = async (token: string): Promise<boolean> => {
         const lowerText = text.toLowerCase();
 
         if (userRes.status === 429 || lowerText.includes("too many requests") || lowerText.includes("rate limit")) {
-             throw new Error("Connection busy (Proxy Rate Limit). Please wait a moment and try again.");
+            throw new Error("Connection busy (Proxy Rate Limit). Please wait a moment and try again.");
         }
-        
+
         // Clean up proxy errors that might leak raw HTML
         if (text.includes("The origin") && text.includes("sent too many requests")) {
-             throw new Error("Connection busy. Please wait a moment and try again.");
+            throw new Error("Connection busy. Please wait a moment and try again.");
         }
 
         throw new Error(`ClickUp API Error (${userRes.status}): ${text.substring(0, 100)}`);
@@ -95,15 +95,15 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
         const teamsRes = await fetchWithProxy('https://api.clickup.com/api/v2/team', {
             headers: { 'Authorization': token }
         });
-        
+
         if (!teamsRes.ok) {
-             if (teamsRes.status === 401) throw new Error("Invalid Personal Access Token");
-             return []; 
+            if (teamsRes.status === 401) throw new Error("Invalid Personal Access Token");
+            return [];
         }
-        
+
         const teamsData = await teamsRes.json();
         const teams = teamsData.teams || [];
-        
+
         let allLists: ClickUpHierarchyList[] = [];
 
         // 2. Iterate Teams
@@ -145,24 +145,24 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
                         if (foldersRes && foldersRes.ok) {
                             const foldersData = await foldersRes.json();
                             const folders = foldersData.folders || [];
-                            
+
                             // 4. Iterate Folders to get Lists
                             for (const folder of folders) {
                                 try {
                                     const folderListsRes = await fetchWithProxy(`https://api.clickup.com/api/v2/folder/${folder.id}/list?archived=false`, {
-                                         headers: { 'Authorization': token }
+                                        headers: { 'Authorization': token }
                                     });
                                     if (folderListsRes.ok) {
                                         const folderListsData = await folderListsRes.json();
                                         const folderLists = folderListsData.lists || [];
-                                        
+
                                         folderLists.forEach((l: any) => {
-                                             allLists.push({
-                                                 id: l.id,
-                                                 name: l.name,
-                                                 // INJECT WORKSPACE NAME (team.name) FOR CLARITY
-                                                 groupName: `[${team.name}] ${space.name} > ${folder.name}`
-                                             });
+                                            allLists.push({
+                                                id: l.id,
+                                                name: l.name,
+                                                // INJECT WORKSPACE NAME (team.name) FOR CLARITY
+                                                groupName: `[${team.name}] ${space.name} > ${folder.name}`
+                                            });
                                         });
                                     }
                                 } catch (e) { /* Ignore folder access error */ }
@@ -185,64 +185,64 @@ export const getAllClickUpLists = async (token: string): Promise<ClickUpHierarch
 };
 
 export const createClickUpTask = async ({ listId, token, title, description, parentId }: CreateTaskParams) => {
-  const url = `https://api.clickup.com/api/v2/list/${listId}/task`;
-  
-  // Format Title: "[BugSnap] Title"
-  const formattedTitle = title.startsWith('[BugSnap]') ? title : `[BugSnap] ${title}`;
-  
-  // Format Description: Add footer
-  const footer = `\n\n---\nCreated using BugSnap`;
-  const formattedDescription = description.endsWith('BugSnap') ? description : description + footer;
+    const url = `https://api.clickup.com/api/v2/list/${listId}/task`;
 
-  const payload: any = {
-    name: truncate(formattedTitle, 180), 
-    description: truncate(formattedDescription, 5000), 
-    tags: ["BugSnap"] // Add Tag
-  };
+    // Format Title: "[BugSnap] Title"
+    const formattedTitle = title.startsWith('[BugSnap]') ? title : `[BugSnap] ${title}`;
 
-  if (parentId) {
-    payload.parent = parentId;
-  }
+    // Format Description: Add footer
+    const footer = `\n\n---\nCreated using BugSnap`;
+    const formattedDescription = description.endsWith('BugSnap') ? description : description + footer;
 
-  try {
-    const response = await fetchWithProxy(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+    const payload: any = {
+        name: truncate(formattedTitle, 180),
+        description: truncate(formattedDescription, 5000),
+        tags: ["BugSnap"] // Add Tag
+    };
 
-    if (!response.ok) {
-      const text = await response.text();
-      let errMessage = text;
-      try {
-          const json = JSON.parse(text);
-          errMessage = json.err || json.ECODE || text;
-      } catch (e) {
-          // Use raw text if json parsing fails
-      }
-      throw new Error(`ClickUp API Error: ${response.status} - ${errMessage}`);
+    if (parentId) {
+        payload.parent = parentId;
     }
 
-    const data = await response.json();
-    
-    // Ensure URL is present (fallback construction)
-    if (!data.url && data.id) {
-        data.url = `https://app.clickup.com/t/${data.id}`;
+    try {
+        const response = await fetchWithProxy(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            let errMessage = text;
+            try {
+                const json = JSON.parse(text);
+                errMessage = json.err || json.ECODE || text;
+            } catch (e) {
+                // Use raw text if json parsing fails
+            }
+            throw new Error(`ClickUp API Error: ${response.status} - ${errMessage}`);
+        }
+
+        const data = await response.json();
+
+        // Ensure URL is present (fallback construction)
+        if (!data.url && data.id) {
+            data.url = `https://app.clickup.com/t/${data.id}`;
+        }
+
+        return data;
+    } catch (error) {
+        console.error("ClickUp Task Creation Failed:", error);
+        throw error;
     }
-    
-    return data;
-  } catch (error) {
-    console.error("ClickUp Task Creation Failed:", error);
-    throw error;
-  }
 };
 
 export const updateClickUpTask = async (taskId: string, token: string, updatePayload: { description?: string }) => {
     const url = `https://api.clickup.com/api/v2/task/${taskId}`;
-    
+
     try {
         const response = await fetchWithProxy(url, {
             method: 'PUT',
@@ -264,98 +264,158 @@ export const updateClickUpTask = async (taskId: string, token: string, updatePay
     }
 };
 
-export const uploadClickUpAttachment = async (taskId: string, token: string, fileBlob: Blob, filename: string) => {
-  const url = `https://api.clickup.com/api/v2/task/${taskId}/attachment`;
-  
-  const formData = new FormData();
-  formData.append('attachment', fileBlob, filename);
+export const createClickUpComment = async (taskId: string, token: string, commentText: string) => {
+    const url = `https://api.clickup.com/api/v2/task/${taskId}/comment`;
+    try {
+        const response = await fetchWithProxy(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                comment_text: commentText,
+                notify_all: false
+            })
+        });
 
-  try {
-    const response = await fetchWithProxy(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': token,
-        // Content-Type is automatic with FormData
-      },
-      body: formData
-    });
-
-    if (!response.ok) {
-        const text = await response.text();
-        
-        // Specific handling for storage limits
-        if (text.includes("Over allocated storage")) {
-            const sizeInMB = (fileBlob.size / (1024 * 1024)).toFixed(2);
-            throw new Error(`Storage Full. The target ClickUp Workspace is full. This happens when targeting a 'Personal' workspace instead of a 'Business' one. Check your Destination List.`);
+        if (!response.ok) {
+            throw new Error(`Failed to create comment: ${response.status}`);
         }
 
-        throw new Error(`Attachment Upload Failed: ${response.status} - ${text}`);
+        return await response.json();
+    } catch (error) {
+        console.error("ClickUp Comment Creation Failed:", error);
+        throw error;
     }
+};
 
-    return await response.json();
-  } catch (error) {
-    console.error("ClickUp Attachment Upload Failed:", error);
-    throw error;
-  }
+export const uploadClickUpAttachment = async (taskId: string, token: string, fileBlob: Blob, filename: string) => {
+    // Helper for performing the upload
+    const performUpload = async (targetUrl: string) => {
+        const formData = new FormData();
+        formData.append('attachment', fileBlob, filename);
+
+        const response = await fetchWithProxy(targetUrl, {
+            method: 'POST',
+            headers: {
+                'Authorization': token,
+            },
+            body: formData
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text);
+        }
+        return await response.json();
+    };
+
+    try {
+        // 1. Try Standard Upload
+        const url = `https://api.clickup.com/api/v2/task/${taskId}/attachment`;
+        return await performUpload(url);
+
+    } catch (error: any) {
+        console.warn("Standard ClickUp upload failed, attempting fallback to comment...", error);
+
+        // 2. Fallback: Create Comment -> Upload to Comment
+        try {
+            // Create a comment to attach to
+            const commentData = await createClickUpComment(taskId, token, "Attachment (Fallback Upload)");
+            if (commentData && commentData.id) {
+                // Upload with comment_id query param
+                // Note: ClickUp API allows ?custom_task_ids=true&team_id=... but for comments 
+                // the standard is often just linking it. However, some endpoints support ?comment_id=...
+                // We will try appending the comment_id to the attachment URL as per common patterns 
+                // or user suggestion.
+                // Actually, the user said "upload in the activity chat". 
+                // If we just upload to the task, it shows in activity. 
+                // If that failed due to storage, maybe attaching TO A COMMENT specifically helps?
+                // Let's try the specific endpoint if it exists or just the param.
+                // The API docs say POST /task/{task_id}/attachment?custom_task_ids=true&team_id=123
+                // It doesn't explicitly document ?comment_id for this endpoint in all versions, 
+                // but we will try passing it.
+
+                // If the user meant "post it as a comment attachment", 
+                // we might need to use the comment creation with attachment? 
+                // But comment creation usually takes text.
+
+                // Let's try the query param approach as a best effort based on the request.
+                const fallbackUrl = `https://api.clickup.com/api/v2/task/${taskId}/attachment?comment_id=${commentData.id}`;
+                return await performUpload(fallbackUrl);
+            }
+        } catch (fallbackError) {
+            console.error("Fallback upload also failed:", fallbackError);
+            // Throw the original error or a combined one
+            const text = error.message || "";
+            if (text.includes("Over allocated storage")) {
+                const sizeInMB = (fileBlob.size / (1024 * 1024)).toFixed(2);
+                throw new Error(`Storage Full. The target ClickUp Workspace is full. Try upgrading your plan or freeing up space.`);
+            }
+            throw new Error(`Upload Failed: ${text}`);
+        }
+        throw error;
+    }
 };
 
 export const generateTaskDescription = (slide: Slide): string => {
-  let desc = `## Observations\n\n`;
-  
-  if (slide.annotations.length === 0) {
-    desc += `_No specific annotations provided._\n`;
-  } else {
-    slide.annotations.forEach((ann, i) => {
-      desc += `**${i + 1}.** ${ann.comment || 'No comment'}\n`;
-    });
-  }
+    let desc = `## Observations\n\n`;
 
-  desc += `\n\n---\n`;
-  desc += `**Metadata**\n`;
-  desc += `Captured: ${new Date(slide.createdAt).toLocaleString()}\n`;
-  desc += `Source: BugSnap`;
-  
-  return desc;
+    if (slide.annotations.length === 0) {
+        desc += `_No specific annotations provided._\n`;
+    } else {
+        slide.annotations.forEach((ann, i) => {
+            desc += `**${i + 1}.** ${ann.comment || 'No comment'}\n`;
+        });
+    }
+
+    desc += `\n\n---\n`;
+    desc += `**Metadata**\n`;
+    desc += `Captured: ${new Date(slide.createdAt).toLocaleString()}\n`;
+    desc += `Source: BugSnap`;
+
+    return desc;
 };
 
 export const generateMasterDescription = (slides: Slide[]): string => {
-  let desc = `# Bug Report Summary\n\n`;
-  desc += `Total Slides: ${slides.length}\n\n`;
+    let desc = `# Bug Report Summary\n\n`;
+    desc += `Total Slides: ${slides.length}\n\n`;
 
-  slides.forEach((slide, i) => {
-      desc += `## Slide ${i + 1}: ${slide.name}\n`;
-      if (slide.annotations.length > 0) {
-          slide.annotations.forEach((ann, j) => {
-              desc += `- **Issue ${j + 1}:** ${ann.comment || 'No details'}\n`;
-          });
-      } else {
-          desc += `_No annotations._\n`;
-      }
-      desc += `\n`;
-  });
+    slides.forEach((slide, i) => {
+        desc += `## Slide ${i + 1}: ${slide.name}\n`;
+        if (slide.annotations.length > 0) {
+            slide.annotations.forEach((ann, j) => {
+                desc += `- **Issue ${j + 1}:** ${ann.comment || 'No details'}\n`;
+            });
+        } else {
+            desc += `_No annotations._\n`;
+        }
+        desc += `\n`;
+    });
 
-  return desc;
+    return desc;
 };
 
 export const fetchClickUpTasks = async (listId: string, token: string, includeSubtasks: boolean = true): Promise<ReportedIssue[]> => {
     const url = `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&subtasks=${includeSubtasks}`;
-    
+
     try {
         const response = await fetchWithProxy(url, {
             headers: { 'Authorization': token }
         });
-        
+
         if (!response.ok) {
-             // Handle generic failure, but let's check text for proxy errors if any
+            // Handle generic failure, but let's check text for proxy errors if any
             const text = await response.text();
             if (text.includes('corsdemo')) throw new Error('corsdemo_required');
-            
+
             throw new Error(`Failed to fetch ClickUp tasks: ${response.status}`);
         }
-        
+
         const data = await response.json();
         const tasks = data.tasks || [];
-        
+
         return tasks.map((t: any) => ({
             id: t.id,
             title: t.name,

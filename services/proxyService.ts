@@ -20,11 +20,16 @@ interface ProxyProvider {
 
 const PROXY_PROVIDERS: ProxyProvider[] = [
   {
+    name: 'Local Vite Proxy',
+    format: (url) => `/api/proxy?url=${encodeURIComponent(url)}`,
+    requiresHeaders: false
+  },
+  {
     name: 'corsproxy.io',
     format: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     requiresHeaders: false
   },
-  
+
   {
     name: 'cors-anywhere',
     format: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
@@ -55,15 +60,15 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
   for (const provider of PROXY_PROVIDERS) {
     // Skip if provider doesn't support the method (e.g. POST to allorigins)
     if (provider.methods && !provider.methods.includes(method)) {
-        continue;
+      continue;
     }
 
     try {
       const proxyUrl = provider.format(url);
-      
+
       // Prepare headers
       const headers = new Headers(options.headers || {});
-      
+
       // Only add x-requested-with if the specific proxy requires it.
       if (provider.requiresHeaders) {
         headers.set('x-requested-with', 'XMLHttpRequest');
@@ -73,7 +78,7 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
         ...options,
         headers
       });
-      
+
       // If success, return immediately
       if (response.ok) {
         return response;
@@ -81,47 +86,47 @@ export const fetchWithProxy = async (url: string, options: RequestInit = {}): Pr
 
       // Handle specific Cors-Anywhere lock (Status 403 with specific body)
       if (response.status === 403 && provider.name === 'cors-anywhere') {
-         const text = await response.clone().text();
-         if (text.includes('See /corsdemo')) {
-             throw new Error('corsdemo_required'); 
-         }
+        const text = await response.clone().text();
+        if (text.includes('See /corsdemo')) {
+          throw new Error('corsdemo_required');
+        }
       }
 
       // Smart Failure Selection:
       // We want to return the most "useful" error response if all proxies fail.
-      
-      if (!failureResponse) {
-          failureResponse = response;
-      } else {
-          const currentStatus = failureResponse.status;
-          const newStatus = response.status;
 
-          // Prefer Application Errors (400, 401, 404, 500) over Proxy Errors (429, 503)
-          // If the current saved response is a Rate Limit (429), and we have a new one that isn't, take the new one.
-          if (currentStatus === 429 && newStatus !== 429) {
-              failureResponse = response;
-          }
-          // Prefer Auth errors (401/403) as they usually mean we reached the destination
-          else if ((currentStatus !== 401 && currentStatus !== 403) && (newStatus === 401 || newStatus === 403)) {
-              failureResponse = response;
-          }
+      if (!failureResponse) {
+        failureResponse = response;
+      } else {
+        const currentStatus = failureResponse.status;
+        const newStatus = response.status;
+
+        // Prefer Application Errors (400, 401, 404, 500) over Proxy Errors (429, 503)
+        // If the current saved response is a Rate Limit (429), and we have a new one that isn't, take the new one.
+        if (currentStatus === 429 && newStatus !== 429) {
+          failureResponse = response;
+        }
+        // Prefer Auth errors (401/403) as they usually mean we reached the destination
+        else if ((currentStatus !== 401 && currentStatus !== 403) && (newStatus === 401 || newStatus === 403)) {
+          failureResponse = response;
+        }
       }
-      
+
       // console.warn(`Proxy ${provider.name} returned status ${response.status}. Trying next...`);
-      
+
     } catch (err: any) {
       // console.warn(`Proxy ${provider.name} failed:`, err);
-      
+
       // If it's the specific lock error, stop trying and throw immediately to prompt user
       if (err.message === 'corsdemo_required') {
-          throw new Error(`corsdemo_required`);
+        throw new Error(`corsdemo_required`);
       }
     }
   }
 
   // If we exhausted all proxies and have a failure response return it.
   if (failureResponse) {
-      return failureResponse;
+    return failureResponse;
   }
 
   throw new Error(`Network Error: Unable to connect via any proxy. Please check your connection.`);

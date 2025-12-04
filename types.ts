@@ -48,26 +48,27 @@ export interface IntegrationConfig {
   slackWebhook?: string; // Deprecated in favor of token
   slackToken?: string; // Bot User OAuth Token (xoxb-...)
   slackChannel?: string; // Channel ID (C123456)
-  
+
   // Teams Configuration
   teamsWebhookUrl?: string; // Incoming Webhook URL
   teamsToken?: string; // @deprecated - Legacy Graph API
   teamsTeamId?: string; // @deprecated - Legacy Graph API
   teamsChannelId?: string; // @deprecated - Legacy Graph API
-  
+
   asanaToken?: string; // Asana Personal Access Token
   asanaWorkspaceId?: string; // Default Workspace ID
-  
+
   // Trello Configuration
   trelloApiKey?: string;
   trelloToken?: string;
-  
+
   webhookUrl?: string; // Custom Webhook URL
   zohoToken?: string; // Zoho Projects OAuth Token
   zohoDC?: string; // Zoho Data Center (eu, com, etc.)
   zohoSprintsToken?: string; // Zoho Sprints OAuth Token
   zohoSprintsDC?: string; // Zoho Sprints Data Center
   googleDriveToken?: string; // Google Drive Access Token for Backup
+  microsoftToken?: string; // Microsoft Graph Access Token
 
   // Scheduled Reporting
   scheduleEnabled?: boolean;
@@ -90,7 +91,7 @@ export interface IssueMetric {
   fill: string;
 }
 
-export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Trello' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive';
+export type IntegrationSource = 'ClickUp' | 'Jira' | 'Slack' | 'Teams' | 'Asana' | 'Trello' | 'Webhook' | 'Zoho' | 'ZohoSprints' | 'GoogleDrive' | 'Microsoft';
 
 export interface ReportedIssue {
   id: string;
@@ -125,9 +126,9 @@ export type CaptureMode = 'screenshot' | 'video' | 'floating';
 
 // ClickUp Hierarchy Types
 export interface ClickUpHierarchyList {
-    id: string;
-    name: string;
-    groupName: string; // "Space Name > Folder Name"
+  id: string;
+  name: string;
+  groupName: string; // "Space Name > Folder Name"
 }
 
 // Jira Types
@@ -173,26 +174,26 @@ export interface TrelloList {
 
 // Zoho Types
 export interface ZohoPortal {
-    id: string;
-    name: string;
+  id: string;
+  name: string;
 }
 export interface ZohoProject {
-    id: string;
-    name: string;
+  id: string;
+  name: string;
 }
 
 // Zoho Sprints Types
 export interface ZohoSprintsTeam {
-    id: string;
-    name: string;
+  id: string;
+  name: string;
 }
 export interface ZohoSprintsProject {
-    id: string;
-    name: string;
+  id: string;
+  name: string;
 }
 export interface ZohoSprintsItemType {
-    id: string;
-    name: string;
+  id: string;
+  name: string;
 }
 
 // Dashboard Filters
